@@ -608,6 +608,77 @@ async def register_job_routes(app: FastAPI, builder: WorkflowBuilder, worker: Fa
         )
 
     @app.get(
+        "/v1/jobs/async/job/{job_id}/artifacts",
+        tags=["async jobs"],
+        summary="List durable artifacts",
+        description="List generated artifacts (charts, CSVs, notebooks) harvested from the sandbox.",
+        responses={404: {"description": "Job not found"}},
+    )
+    async def list_job_artifacts(job_id: str) -> dict:
+        """List durable artifact metadata for a job (no bytes)."""
+        from aiq_agent.agents.deep_researcher.sandbox.artifacts import SqlArtifactStore
+
+        principal = require_verified_principal()
+        await authorize_job_access(job_store, db_url, job_id, principal)
+
+        store = SqlArtifactStore(db_url)
+        artifacts = await asyncio.to_thread(store.list, job_id)
+        # Exclude storage internals (storage_uri embeds the db_url, which may carry
+        # credentials/hostnames; sandbox_path is an internal layout detail) from the
+        # client-facing payload. Clients use the content endpoint, not these fields.
+        return {
+            "job_id": job_id,
+            "artifacts": [
+                a.model_dump(mode="json", exclude={"storage_uri", "sandbox_path"}) for a in artifacts
+            ],
+        }
+
+    @app.get(
+        "/v1/jobs/async/job/{job_id}/artifacts/{artifact_id}/content",
+        tags=["async jobs"],
+        summary="Download artifact content",
+        description="Stream the bytes of a single artifact. Job-ownership checks apply.",
+        responses={404: {"description": "Job or artifact not found"}},
+    )
+    async def get_job_artifact_content(job_id: str, artifact_id: str) -> StreamingResponse:
+        """Stream an artifact's bytes (auth-scoped to the owning job)."""
+        from aiq_agent.agents.deep_researcher.sandbox.artifacts import SqlArtifactStore
+
+        principal = require_verified_principal()
+        await authorize_job_access(job_store, db_url, job_id, principal)
+
+        store = SqlArtifactStore(db_url)
+        artifact = await asyncio.to_thread(store.get, job_id, artifact_id)
+        if artifact is None:
+            raise HTTPException(404, f"Artifact not found: {artifact_id}")
+
+        # The filename is sandbox-controlled; strip control chars and quotes so it cannot
+        # break out of the header value (response-splitting / header injection).
+        safe_filename = "".join(c for c in artifact.filename if c.isprintable() and c not in '"\\') or "artifact"
+        # Starlette encodes header values as Latin-1, so a non-Latin-1 filename (emoji, CJK)
+        # would raise UnicodeEncodeError. Provide an ASCII-only fallback plus an RFC 5987
+        # filename* with the UTF-8 percent-encoded original for clients that support it.
+        from urllib.parse import quote
+
+        ascii_filename = safe_filename.encode("ascii", "ignore").decode() or "artifact"
+        encoded_filename = quote(safe_filename, safe="")
+        # Only magic-verified raster images may render inline; everything else (SVG, HTML,
+        # notebooks, PDFs) is forced to download with nosniff to prevent stored-XSS if a
+        # user opens the content URL directly in a browser.
+        inline_safe = artifact.mime_type in {"image/png", "image/jpeg", "image/webp"}
+        disposition = "inline" if inline_safe else "attachment"
+        return StreamingResponse(
+            store.open_bytes(job_id, artifact_id),
+            media_type=artifact.mime_type,
+            headers={
+                "Content-Disposition": (
+                    f'{disposition}; filename="{ascii_filename}"; filename*=UTF-8\'\'{encoded_filename}'
+                ),
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    @app.get(
         "/v1/jobs/async/job/{job_id}/report",
         response_model=JobReportResponse,
         tags=["async jobs"],
