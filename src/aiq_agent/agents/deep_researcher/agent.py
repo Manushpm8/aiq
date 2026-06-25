@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Sequence
@@ -251,6 +252,23 @@ class DeepResearcherAgent:
             # Post-process: sanitize report (strip body URLs, shortened URLs, unsafe URLs)
             sanitization = sanitize_report(final_message)
             final_message = sanitization.sanitized_report
+
+            # Post-process: harvest sandbox artifacts and resolve artifact:// references so
+            # generated charts/files render in the report. Inert (manager is None) unless a
+            # sandbox + artifact_capture + db_url are configured. Blocking I/O off the loop.
+            manager = self.deepagents_runtime.artifact_manager
+            if manager is not None:
+                await asyncio.to_thread(manager.final_harvest)
+                produced = await asyncio.to_thread(manager.store.list, manager.job_id)
+                final_message = await asyncio.to_thread(
+                    manager.resolve_report_references, final_message, produced
+                )
+                final_message = await asyncio.to_thread(
+                    manager.ensure_inline_artifacts_embedded, final_message, produced
+                )
+                final_message = await asyncio.to_thread(
+                    manager.append_artifact_index, final_message, produced
+                )
 
             # Re-emit the verified/sanitized report so the frontend overwrites
             # the raw version that on_llm_end auto-emitted during ainvoke().
