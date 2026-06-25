@@ -1035,9 +1035,24 @@ _SUSPICIOUS_SCHEMES_RE = re.compile(r"^(?:javascript|data|vbscript|file):", re.I
 # via _URL_TRIM_CHARS rather than excluded in the character class.
 _BARE_URL_RE = re.compile(r"https?://[^\s<>\"'\]]+")
 
-# Body URL patterns (used by sanitize_report)
-_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(\s*\w+://[^\s)]+\)")
+# Body URL patterns (used by sanitize_report). Group 2 captures the link destination so
+# artifact:// references (durable sandbox figures the runtime resolves for the UI/PDF) are
+# preserved instead of collapsed to plain text.
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(\s*(\w+://[^\s)]+)\)")
 _BODY_URL_RE = re.compile(r"\w+://[^\s<>\"'\]]+")
+_ARTIFACT_SCHEME = "artifact://"
+
+
+def _collapse_md_link(match: re.Match) -> str:
+    """Collapse a markdown link to its label, except artifact:// links which are kept.
+
+    The artifact:// destination must survive sanitization so the report post-processor can
+    resolve it to a durable artifact id; a label that merely contains "artifact://" still
+    collapses so stray text never leaks a URL into the body.
+    """
+    if match.group(2).startswith(_ARTIFACT_SCHEME):
+        return match.group(0)
+    return match.group(1)
 
 
 @dataclass
@@ -1103,6 +1118,9 @@ def sanitize_report(report_text: str) -> ReportSanitizationResult:
 
     def _replace_body_url(match: re.Match) -> str:
         nonlocal body_urls_removed, body_urls_replaced
+        # Preserve artifact:// references (durable figures resolved later); never strip them.
+        if match.group(0).startswith(_ARTIFACT_SCHEME):
+            return match.group(0)
         url = match.group(0).rstrip(_URL_TRIM_CHARS)
         normalized = _normalize_url(url)
         if normalized in url_to_citation:
@@ -1111,8 +1129,8 @@ def sanitize_report(report_text: str) -> ReportSanitizationResult:
         body_urls_removed += 1
         return ""
 
-    # Collapse markdown links to display text
-    cleaned_body = _MD_LINK_RE.sub(r"\1", body)
+    # Collapse markdown links to display text (artifact:// links are preserved)
+    cleaned_body = _MD_LINK_RE.sub(_collapse_md_link, body)
     # Replace matching bare URLs with [N], strip the rest
     cleaned_body = _BODY_URL_RE.sub(_replace_body_url, cleaned_body)
     # Clean up leftover empty parentheses and extra spaces
