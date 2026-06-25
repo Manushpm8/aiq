@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Callable
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -70,6 +71,8 @@ class DeepResearcherAgent:
         skills: DeepResearchSkillsConfig | None = None,
         sandbox: DeepResearchSandboxConfig | None = None,
         job_id: str | None = None,
+        artifact_db_url: str | None = None,
+        artifact_emit: Callable[[dict[str, Any]], None] | None = None,
         max_research_concurrency: int = DEFAULT_MAX_RESEARCH_CONCURRENCY,
         max_concurrent_source_tool_calls: int = DEFAULT_MAX_CONCURRENT_SOURCE_TOOL_CALLS,
         max_source_tool_batch_size: int = DEFAULT_MAX_SOURCE_TOOL_BATCH_SIZE,
@@ -105,7 +108,13 @@ class DeepResearcherAgent:
         self.enable_citation_verification = enable_citation_verification
         self.job_id = str(job_id) if job_id is not None else str(uuid4())
 
-        self.deepagents_runtime = DeepAgentsRuntime(skills=skills, sandbox=sandbox, job_id=self.job_id)
+        self.deepagents_runtime = DeepAgentsRuntime(
+            skills=skills,
+            sandbox=sandbox,
+            job_id=self.job_id,
+            artifact_db_url=artifact_db_url,
+            artifact_emit=artifact_emit,
+        )
 
         self._prompts = self._load_prompts()
         source_tool_names = {tool.name for tool in self.tools}

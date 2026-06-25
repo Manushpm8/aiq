@@ -41,6 +41,8 @@ from pydantic import field_validator
 
 from nat.data_models.function import FunctionBaseConfig
 
+from .sandbox.config import ArtifactCaptureConfig
+
 logger = logging.getLogger(__name__)
 
 BUILTIN_SKILLS_DIR = Path(__file__).with_name("skills")
@@ -93,6 +95,10 @@ class DeepResearchSandboxConfig(FunctionBaseConfig, name="deep_research_sandbox"
     network: Literal["blocked", "enabled"] = Field(
         default="blocked",
         description="Outbound network policy for Modal sandboxes.",
+    )
+    artifact_capture: ArtifactCaptureConfig = Field(
+        default_factory=ArtifactCaptureConfig,
+        description="Durable harvesting of generated artifacts (charts/CSVs). Disabled by default.",
     )
 
     @property
@@ -344,6 +350,7 @@ def _create_sandbox_backend(config: DeepResearchSandboxConfig, job_id: str) -> A
             "timeout": config.timeout,
             "idle_timeout": config.idle_timeout,
             "network": {"mode": "blocked" if config.block_network else "open"},
+            "artifact_capture": config.artifact_capture.model_dump(),
             "providers": {
                 "modal": {
                     "app_name": config.app_name,
