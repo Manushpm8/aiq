@@ -126,6 +126,12 @@ class DeepResearchGraphContext:
         return [doc.model_dump() for doc in (self.state.available_documents or [])]
 
     def render_prompt(self, prompt_name: str, **values: Any) -> str:
+        # Expose the sandbox execution context to every prompt so skills can reference the
+        # per-job workdir/artifact dir. setdefault keeps explicit call-site values authoritative
+        # and leaves no-sandbox runs unaffected (execution_enabled is False, paths are defaults).
+        values.setdefault("execution_enabled", self.runtime.execution_enabled)
+        values.setdefault("sandbox_workdir", self.runtime.workdir)
+        values.setdefault("sandbox_artifact_dir", self.runtime.artifact_dir)
         return render_prompt_template(
             self.prompts[prompt_name],
             current_datetime=self.current_datetime,
