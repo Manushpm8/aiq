@@ -18,7 +18,12 @@ Usage:
     # Quick mode - registration check only (no files/services needed)
     python tests/knowledge_layer_tests/run_adapter_compliance.py --backend llamaindex --quick
     python tests/knowledge_layer_tests/run_adapter_compliance.py --backend foundational_rag --quick
+<<<<<<< HEAD
     python tests/knowledge_layer_tests/run_adapter_compliance.py --backend opensearch --quick
+=======
+    python tests/knowledge_layer_tests/run_adapter_compliance.py --backend azure_ai_search --quick \
+      --config '{"endpoint":"https://example.search.windows.net","start_ttl_cleanup":false}'
+>>>>>>> 8351174 (fix(knowledge): harden Azure AI Search configuration and ingestion)
 
     # Full mode - complete ingestion + retrieval test
     python tests/knowledge_layer_tests/run_adapter_compliance.py --backend llamaindex
@@ -94,7 +99,11 @@ class AdapterComplianceTest:
         backend_imports = {
             "llamaindex": "knowledge_layer.llamaindex",
             "foundational_rag": "knowledge_layer.foundational_rag",
+<<<<<<< HEAD
             "opensearch": "knowledge_layer.opensearch",
+=======
+            "azure_ai_search": "knowledge_layer.azure_ai_search",
+>>>>>>> 8351174 (fix(knowledge): harden Azure AI Search configuration and ingestion)
         }
 
         module_name = backend_imports.get(self.backend.lower())
@@ -390,8 +399,9 @@ class AdapterComplianceTest:
         if not files:
             return True, "No files to delete (already empty)"
 
+        file_id = files[0].file_id
         filename = files[0].file_name
-        result = self.ingestor.delete_file(filename, self.collection_name)
+        result = self.ingestor.delete_file(file_id, self.collection_name)
 
         if not result:
             return False, f"delete_file returned False for '{filename}'"
@@ -455,7 +465,14 @@ def main():
     )
 
     parser.add_argument(
+<<<<<<< HEAD
         "--backend", "-b", required=True, help="Backend name (e.g., llamaindex, foundational_rag, opensearch)"
+=======
+        "--backend",
+        "-b",
+        required=True,
+        help="Backend name (e.g., llamaindex, foundational_rag, azure_ai_search)",
+>>>>>>> 8351174 (fix(knowledge): harden Azure AI Search configuration and ingestion)
     )
 
     parser.add_argument("--config", "-c", default="{}", help="Backend config as JSON string (default: {})")
