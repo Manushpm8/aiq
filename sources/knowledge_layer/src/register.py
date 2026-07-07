@@ -458,7 +458,7 @@ def _setup_backend(config: KnowledgeRetrievalConfig, summary_llm_obj=None) -> tu
             "chunk_overlap": config.chunk_overlap,
             "summary_max_chars": config.summary_max_chars,
             "collection_name": config.collection_name,
-            "cleanup_files": True,
+            "cleanup_files": False,
             **summary_config,
         }
 

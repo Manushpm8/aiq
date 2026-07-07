@@ -451,6 +451,29 @@ def test_submit_job_uses_one_canonical_file_id(monkeypatch, tmp_path):
     assert ingestor._files[file_id].file_name == "original.txt"
 
 
+def test_upload_file_preserves_caller_owned_source_by_default(monkeypatch, tmp_path):
+    class SynchronousThread:
+        def __init__(self, *, target, args, **kwargs):
+            del kwargs
+            self.target = target
+            self.args = args
+
+        def start(self):
+            self.target(*self.args)
+
+    _install_reader(monkeypatch)
+    monkeypatch.setattr(azure_adapter.threading, "Thread", SynchronousThread)
+    path = tmp_path / "document.txt"
+    path.write_text("content", encoding="utf-8")
+    ingestor, _client = _ingestor()
+    ingestor._embedding = FakeEmbedding()
+    ingestor._splitter = FakeSplitter([FakeNode("content")])
+
+    ingestor.upload_file(str(path), "docs")
+
+    assert path.exists()
+
+
 def test_batches_respect_action_count_and_payload_size():
     documents = [{"id": str(index), "chunk": "x" * 10} for index in range(5)]
     count_batches = list(_iter_index_batches(documents, "upload", max_actions=2, max_bytes=10_000))

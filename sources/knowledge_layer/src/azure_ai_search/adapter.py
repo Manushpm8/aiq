@@ -92,7 +92,7 @@ def _coerce_config(config: dict[str, Any] | None) -> SimpleNamespace:
         "chunk_overlap": 64,
         "summary_max_chars": 1000,
         "collection_name": "default",
-        "cleanup_files": True,
+        "cleanup_files": False,
         "generate_summary": False,
         "summary_llm": None,
         "index_prefix": os.environ.get("AIQ_AZURE_SEARCH_INDEX_PREFIX", "aiq"),
