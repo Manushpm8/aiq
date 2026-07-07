@@ -268,6 +268,7 @@ def test_config_uses_shared_environment_defaults(monkeypatch):
 
 
 def test_shared_embedding_defaults_match_adapter(monkeypatch):
+    monkeypatch.setenv("AIQ_EMBED_BASE_URL", "")
     monkeypatch.delenv("AIQ_EMBED_MODEL", raising=False)
     monkeypatch.delenv("AIQ_EMBED_DIM", raising=False)
 
@@ -277,6 +278,8 @@ def test_shared_embedding_defaults_match_adapter(monkeypatch):
     )
     adapter_config = azure_adapter._coerce_config({"endpoint": "https://example.search.windows.net"})
 
+    assert str(config.embed_base_url) == "https://integrate.api.nvidia.com/v1"
+    assert adapter_config.embed_base_url == "https://integrate.api.nvidia.com/v1"
     assert config.embed_model == "nvidia/llama-nemotron-embed-vl-1b-v2"
     assert config.embed_dim == 2048
     assert adapter_config.embed_model == config.embed_model

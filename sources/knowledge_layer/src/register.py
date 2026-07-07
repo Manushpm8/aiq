@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 def _url_from_env(name: str, default: str | None = None) -> HttpUrl | None:
-    value = os.environ.get(name, default)
+    value = os.environ.get(name) or default
     return HttpUrl(value) if value else None
 
 
