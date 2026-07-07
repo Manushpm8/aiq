@@ -18,12 +18,9 @@ Usage:
     # Quick mode - registration check only (no files/services needed)
     python tests/knowledge_layer_tests/run_adapter_compliance.py --backend llamaindex --quick
     python tests/knowledge_layer_tests/run_adapter_compliance.py --backend foundational_rag --quick
-<<<<<<< HEAD
     python tests/knowledge_layer_tests/run_adapter_compliance.py --backend opensearch --quick
-=======
     python tests/knowledge_layer_tests/run_adapter_compliance.py --backend azure_ai_search --quick \
       --config '{"endpoint":"https://example.search.windows.net","start_ttl_cleanup":false}'
->>>>>>> 8351174 (fix(knowledge): harden Azure AI Search configuration and ingestion)
 
     # Full mode - complete ingestion + retrieval test
     python tests/knowledge_layer_tests/run_adapter_compliance.py --backend llamaindex
@@ -99,11 +96,8 @@ class AdapterComplianceTest:
         backend_imports = {
             "llamaindex": "knowledge_layer.llamaindex",
             "foundational_rag": "knowledge_layer.foundational_rag",
-<<<<<<< HEAD
             "opensearch": "knowledge_layer.opensearch",
-=======
             "azure_ai_search": "knowledge_layer.azure_ai_search",
->>>>>>> 8351174 (fix(knowledge): harden Azure AI Search configuration and ingestion)
         }
 
         module_name = backend_imports.get(self.backend.lower())
@@ -406,12 +400,12 @@ class AdapterComplianceTest:
         if not result:
             return False, f"delete_file returned False for '{filename}'"
 
-        # Azure AI Search applies document deletions asynchronously.
-        deadline = time.monotonic() + min(self.timeout, 30)
-        while filename in {file.file_name for file in self.ingestor.list_files(self.collection_name)}:
-            if time.monotonic() >= deadline:
-                return False, f"File '{filename}' still exists after deletion"
-            time.sleep(1)
+        # Verify deletion
+        remaining = self.ingestor.list_files(self.collection_name)
+        remaining_names = [f.file_name for f in remaining]
+
+        if filename in remaining_names:
+            return False, f"File '{filename}' still exists after deletion"
 
         return True, f"Deleted '{filename}'"
 
@@ -465,14 +459,10 @@ def main():
     )
 
     parser.add_argument(
-<<<<<<< HEAD
-        "--backend", "-b", required=True, help="Backend name (e.g., llamaindex, foundational_rag, opensearch)"
-=======
         "--backend",
         "-b",
         required=True,
-        help="Backend name (e.g., llamaindex, foundational_rag, azure_ai_search)",
->>>>>>> 8351174 (fix(knowledge): harden Azure AI Search configuration and ingestion)
+        help="Backend name (e.g., llamaindex, foundational_rag, opensearch, azure_ai_search)",
     )
 
     parser.add_argument("--config", "-c", default="{}", help="Backend config as JSON string (default: {})")
