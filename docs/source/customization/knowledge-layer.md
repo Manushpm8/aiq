@@ -157,6 +157,7 @@ functions:
 ```
 
 **Azure AI Search (Managed Service)**
+
 ```yaml
 functions:
   knowledge_search:

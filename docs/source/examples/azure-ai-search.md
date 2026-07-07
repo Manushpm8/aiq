@@ -10,6 +10,14 @@ upload API, per-conversation collection routing, document summaries, and
 citations. This example assumes the Azure AI Search service and embedding
 endpoint already exist; it does not deploy Azure infrastructure.
 
+## Prerequisites
+
+- Create or select an [Azure AI Search service](https://learn.microsoft.com/azure/search/search-create-service-portal).
+- Choose a tier whose [index limit](https://learn.microsoft.com/azure/search/search-limits-quotas-capacity) covers
+  the expected number of logical collections. AI-Q creates one physical index per collection.
+- Copy the service endpoint from the Azure portal. For key authentication, also copy an admin key. Otherwise,
+  [enable role-based access](https://learn.microsoft.com/azure/search/keyless-connections) and assign the roles below.
+
 Install the backend dependency:
 
 ```bash
