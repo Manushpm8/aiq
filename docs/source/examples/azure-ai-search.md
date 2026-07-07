@@ -13,8 +13,8 @@ endpoint already exist; it does not deploy Azure infrastructure.
 ## Prerequisites
 
 - Create or select an [Azure AI Search service](https://learn.microsoft.com/azure/search/search-create-service-portal).
-- Choose a tier whose [index limit](https://learn.microsoft.com/azure/search/search-limits-quotas-capacity) covers
-  the expected number of logical collections. AI-Q creates one physical index per collection.
+- Choose a tier whose [document and storage limits](https://learn.microsoft.com/azure/search/search-limits-quotas-capacity)
+  cover the expected data volume. AI-Q stores logical collections in one physical index.
 - Copy the service endpoint from the Azure portal. For key authentication, also copy an admin key. Otherwise,
   [enable role-based access](https://learn.microsoft.com/azure/search/keyless-connections) and assign the roles below.
 
@@ -40,12 +40,11 @@ Search service and grant the workload identity both of these built-in roles:
 
 | Role | Used for |
 |------|----------|
-| `Search Service Contributor` | Create, inspect, update, and delete AI-Q collection indexes. |
+| `Search Service Contributor` | Create and inspect the shared AI-Q index. |
 | `Search Index Data Contributor` | Upload, query, and delete index documents. |
 
-Assign the roles at the search-service scope because AI-Q creates one index per
-logical collection. The principal ID is the object ID of the system-assigned or
-user-assigned managed identity running AI-Q.
+Assign the roles at the search-service scope. The principal ID is the object ID
+of the system-assigned or user-assigned managed identity running AI-Q.
 
 
 Replace the `knowledge_search` block in a web configuration such as
@@ -58,8 +57,6 @@ functions:
     backend: azure_ai_search
     collection_name: ${COLLECTION_NAME:-aiq_default}
     top_k: 5
-    use_hybrid: true
-    use_semantic_ranker: false
 
     generate_summary: true
     summary_model: summary_llm
@@ -71,20 +68,18 @@ selects API-key authentication when present; otherwise the adapter uses
 `DefaultAzureCredential`. Set `AZURE_CLIENT_ID` to select a user-assigned
 identity. Embeddings share `AIQ_EMBED_BASE_URL`, `AIQ_EMBED_MODEL`, and
 `NVIDIA_API_KEY` with the LlamaIndex backend. Azure-specific optional settings
-are `AIQ_EMBED_DIM` and `AIQ_AZURE_SEARCH_INDEX_PREFIX`.
+are `AIQ_EMBED_DIM` and `AIQ_AZURE_SEARCH_INDEX_PREFIX`. The prefix must uniquely
+identify one AI-Q deployment when a search service is shared.
 
-Semantic ranking is opt-in because availability depends on the Azure AI Search
-service. Set `use_semantic_ranker: true` only when semantic ranking is enabled;
-it also requires `use_hybrid: true`.
+Changing the embedding model or dimension selects a different physical index
+and requires re-ingestion. Frontend WebSocket queries use the conversation ID
+as the collection; direct API tests must supply equivalent context or query the
+configured fallback collection.
 
-Existing indexes must use the configured `embed_dim`. Delete and re-ingest a
-collection when changing embedding dimensions. Frontend WebSocket queries use
-the conversation ID as the collection; direct API tests must supply equivalent
-context or query the configured fallback collection.
-
-The backend only lists or mutates indexes carrying its AI-Q ownership marker.
-Logical collection names map to collision-safe physical names under
-`azure_search_index_prefix`; un-namespaced indexes from earlier versions are
-ignored and must be re-ingested. File IDs returned by upload are authoritative
-for status and delete operations. Same-name uploads replace the prior file only
-after the new generation has been fully indexed.
+The backend stores collection, file, and chunk records in one physical index
+selected by `azure_search_index_prefix`, schema version, embedding model, and
+dimension. Every operation applies internal collection filters. Retrieval is
+always hybrid, and ingestion uses fixed 1024-token chunks with 128-token
+overlap. Schema-version-1 indexes are ignored and must be re-ingested. File IDs
+returned by upload are authoritative for status and delete operations;
+same-name uploads coexist independently.

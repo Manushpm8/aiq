@@ -32,11 +32,7 @@ functions:
     _type: knowledge_retrieval
     backend: azure_ai_search
     collection_name: ${COLLECTION_NAME:-aiq_default}
-    use_hybrid: true
-    use_semantic_ranker: false
     top_k: 5
-    chunk_size: 512
-    chunk_overlap: 64
 
     generate_summary: true
     summary_model: summary_llm
@@ -47,44 +43,38 @@ Explicit YAML values still override the environment-backed defaults. Azure
 Search uses `AZURE_SEARCH_ENDPOINT` and optional `AZURE_SEARCH_API_KEY`.
 Embedding configuration shares `AIQ_EMBED_BASE_URL`, `AIQ_EMBED_MODEL`, and
 `NVIDIA_API_KEY` with the LlamaIndex backend; Azure additionally accepts
-`AIQ_EMBED_DIM` and `AIQ_AZURE_SEARCH_INDEX_PREFIX`.
-
-Semantic ranking is disabled by default because support depends on the Azure AI
-Search service. Set `use_semantic_ranker: true` only when semantic ranking is
-enabled; it also requires `use_hybrid: true`.
+`AIQ_EMBED_DIM` and `AIQ_AZURE_SEARCH_INDEX_PREFIX`. The index prefix must be
+unique to one AI-Q deployment sharing a search service.
 
 When `AZURE_SEARCH_API_KEY` is absent, the adapter uses
 `DefaultAzureCredential`. Set `AZURE_CLIENT_ID` when a user-assigned identity
 should be selected. Enable role-based access on the search service and grant
 the identity `Search Service Contributor` for index management plus `Search
 Index Data Contributor` for document ingestion and retrieval. Assign both roles
-at the search-service scope because AI-Q creates one index per collection.
+at the search-service scope because logical collections share one physical index.
 
 The adapter parses PDF, DOCX, TXT, and Markdown uploads with LlamaIndex,
-creates one namespaced Azure AI Search index per AI-Q collection, and performs
-vector or hybrid retrieval with optional semantic ranking. Logical collection
-names are sanitized and combined with a stable hash, preventing collisions and
-protecting unrelated indexes in a shared service. Only indexes containing the
-AI-Q ownership/schema marker are visible or mutable through this backend.
+creates one namespaced Azure AI Search index per deployment prefix, schema
+version, embedding model, and dimension, and always performs balanced hybrid
+retrieval. Collection and file manifests isolate logical collections in that
+index. Documents use fixed 1024-token chunks with 128-token overlap. Only the
+index carrying the matching AI-Q ownership/schema marker is visible or mutable.
 
 Upload responses return canonical UUID file IDs used by job progress, list,
-status, and delete operations. Re-uploading the same filename writes and
-verifies a new generation before deleting old chunks. Upload and delete
-requests stay below Azure's 1,000-action and 16 MiB limits, and every
-per-document result is checked.
+status, and delete operations. Same-name uploads coexist independently under
+different file IDs. Upload and delete requests stay below Azure's 1,000-action
+and 16 MiB limits, and every per-document result is checked.
 
 Collections use the shared Knowledge Layer TTL settings:
 `AIQ_COLLECTION_TTL_HOURS` defaults to 24 hours and
 `AIQ_TTL_CLEANUP_INTERVAL_SECONDS` defaults to 3600 seconds. Successful file
 and collection deletion also clears corresponding summary records.
 
-`embed_dim` must match both the embedding model output and any existing index.
+`embed_dim` must match both the embedding model output and the selected index.
 Changing from a 2048-dimensional model to `nvidia/nv-embed-v1` at 4096
-dimensions requires deleting and re-ingesting the old collection. The adapter
-validates ownership, fields, vector profile, dimensions, and semantic
-configuration before use; it does not alter an incompatible schema. Indexes
-created by the earlier un-namespaced implementation are deliberately ignored,
-so re-ingest those collections.
+dimensions selects a different physical index and requires re-ingestion. The
+adapter validates ownership, fields, vector profile, and dimensions before use;
+it does not alter an incompatible schema.
 
 For direct API tests, use the same collection or conversation context used for
 upload. A standalone chat request without that context falls back to the

@@ -27,7 +27,7 @@ uv pip install -e "sources/knowledge_layer[azure_ai_search]"
 | `llamaindex` | ChromaDB | Development, prototyping |
 | `opensearch` | OpenSearch k-NN | Self-hosted OpenSearch, Amazon OpenSearch Serverless |
 | `foundational_rag` | Remote Milvus | Production, multi-user |
-| `azure_ai_search` | Azure AI Search | Managed hybrid and semantic search |
+| `azure_ai_search` | Azure AI Search | Managed hybrid search |
 
 ## Usage
 

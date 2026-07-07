@@ -255,7 +255,7 @@ class KnowledgeRetrievalConfig(FunctionBaseConfig, name="knowledge_retrieval"):
     )
     embed_model: str = Field(
         default_factory=lambda: _env_value("AIQ_EMBED_MODEL", default="nvidia/llama-nemotron-embed-vl-1b-v2"),
-        description="Embedding model for OpenSearch vector ingestion and retrieval.",
+        description="Embedding model for OpenSearch and Azure AI Search ingestion and retrieval.",
     )
     embed_base_url: str = Field(
         default_factory=lambda: _env_value("AIQ_EMBED_BASE_URL", default="https://integrate.api.nvidia.com/v1"),
@@ -271,28 +271,14 @@ class KnowledgeRetrievalConfig(FunctionBaseConfig, name="knowledge_retrieval"):
         description="Optional Azure AI Search admin key; defaults to AZURE_SEARCH_API_KEY",
     )
     azure_search_index_prefix: str = Field(
-        default_factory=lambda: os.environ.get("AIQ_AZURE_SEARCH_INDEX_PREFIX", "aiq"),
+        default_factory=lambda: _env_value("AIQ_AZURE_SEARCH_INDEX_PREFIX", default="aiq"),
         min_length=1,
-        description="Prefix for AI-Q-owned indexes; defaults to AIQ_AZURE_SEARCH_INDEX_PREFIX or aiq",
+        description="Unique deployment namespace for the shared AI-Q index",
     )
     embed_dim: int = Field(
-        default_factory=lambda: int(os.environ.get("AIQ_EMBED_DIM", "2048")),
+        default_factory=lambda: _env_int("AIQ_EMBED_DIM", 2048),
         gt=0,
         description="Embedding dimensions; defaults to AIQ_EMBED_DIM and must match existing indexes",
-    )
-    use_hybrid: bool = Field(default=True, description="Combine vector and keyword search (azure_ai_search only)")
-    use_semantic_ranker: bool = Field(
-        default=False,
-        description=(
-            "Enable Azure semantic ranking when supported by the Azure AI Search service (azure_ai_search only)"
-        ),
-    )
-    chunk_size: int = Field(default=512, gt=0, description="Tokens per chunk (azure_ai_search only)")
-    chunk_overlap: int = Field(default=64, ge=0, description="Token overlap between chunks (azure_ai_search only)")
-    summary_max_chars: int = Field(
-        default=1000,
-        gt=0,
-        description="Maximum document characters sent to summary model (azure_ai_search only)",
     )
 
     @model_validator(mode="after")
@@ -345,10 +331,6 @@ class KnowledgeRetrievalConfig(FunctionBaseConfig, name="knowledge_retrieval"):
         elif backend == "azure_ai_search":
             if self.azure_search_endpoint is None:
                 raise ValueError("azure_ai_search requires azure_search_endpoint")
-            if self.chunk_overlap >= self.chunk_size:
-                raise ValueError("chunk_overlap must be smaller than chunk_size")
-            if not self.use_hybrid and self.use_semantic_ranker:
-                raise ValueError("use_semantic_ranker=true requires use_hybrid=true")
 
         return self
 
@@ -445,11 +427,6 @@ def _setup_backend(config: KnowledgeRetrievalConfig, summary_llm_obj=None) -> tu
             "embed_base_url": str(config.embed_base_url),
             "embed_model": config.embed_model,
             "embed_dim": config.embed_dim,
-            "use_hybrid": config.use_hybrid,
-            "use_semantic_ranker": config.use_semantic_ranker,
-            "chunk_size": config.chunk_size,
-            "chunk_overlap": config.chunk_overlap,
-            "summary_max_chars": config.summary_max_chars,
             "collection_name": config.collection_name,
             "cleanup_files": False,
             **summary_config,
@@ -550,7 +527,7 @@ async def knowledge_retrieval(config: KnowledgeRetrievalConfig, _builder: Builde
 
     This function provides semantic search over documents that have been
     previously ingested into the knowledge layer. It supports multiple
-    backends (LlamaIndex, Foundational RAG, OpenSearch) and returns formatted results
+    backends (LlamaIndex, Foundational RAG, OpenSearch, Azure AI Search) and returns formatted results
     suitable for LLM consumption.
 
     The retriever and ingestor are initialized once when the function is

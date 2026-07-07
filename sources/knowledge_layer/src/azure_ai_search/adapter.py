@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import threading
+import time
 import uuid
 from collections.abc import Iterator
 from datetime import UTC
@@ -17,11 +18,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from azure.core import MatchConditions
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import ClientAuthenticationError
 from azure.core.exceptions import HttpResponseError
-from azure.core.exceptions import ResourceModifiedError
 from azure.core.exceptions import ResourceNotFoundError
 from azure.core.exceptions import ServiceRequestError
 from azure.identity import DefaultAzureCredential
@@ -33,10 +32,6 @@ from azure.search.documents.indexes.models import SearchableField
 from azure.search.documents.indexes.models import SearchField
 from azure.search.documents.indexes.models import SearchFieldDataType
 from azure.search.documents.indexes.models import SearchIndex
-from azure.search.documents.indexes.models import SemanticConfiguration
-from azure.search.documents.indexes.models import SemanticField
-from azure.search.documents.indexes.models import SemanticPrioritizedFields
-from azure.search.documents.indexes.models import SemanticSearch
 from azure.search.documents.indexes.models import SimpleField
 from azure.search.documents.indexes.models import VectorSearch
 from azure.search.documents.indexes.models import VectorSearchAlgorithmMetric
@@ -64,14 +59,24 @@ from aiq_agent.knowledge.schema import FileStatus
 logger = logging.getLogger(__name__)
 
 _BACKEND_NAME = "azure_ai_search"
-_SEMANTIC_CONFIG = "default-semantic"
 _SCHEMA_VERSION = 1
 _MARKER_PREFIX = "aiq.azure_ai_search:"
+_MARKER_MAX_CHARS = 4000
 _MAX_INDEX_NAME_LENGTH = 128
 _MAX_BATCH_ACTIONS = 1000
 _MAX_BATCH_BYTES = 16 * 1024 * 1024
 _PAGE_SIZE = 1000
 _DELETE_ATTEMPTS = 3
+_CONSISTENCY_ATTEMPTS = 20
+_CONSISTENCY_DELAY_SECONDS = 0.25
+_CHUNK_SIZE = 1024
+_CHUNK_OVERLAP = 128
+_SUMMARY_MAX_CHARS = 1000
+_RECORD_COLLECTION = "collection"
+_RECORD_FILE = "file"
+_RECORD_CHUNK = "chunk"
+_COLLECTION_ACTIVE = "active"
+_COLLECTION_DELETING = "deleting"
 
 COLLECTION_TTL_HOURS = float(os.environ.get("AIQ_COLLECTION_TTL_HOURS", "24"))
 TTL_CLEANUP_INTERVAL_SECONDS = int(os.environ.get("AIQ_TTL_CLEANUP_INTERVAL_SECONDS", "3600"))
@@ -79,18 +84,12 @@ TTL_CLEANUP_INTERVAL_SECONDS = int(os.environ.get("AIQ_TTL_CLEANUP_INTERVAL_SECO
 
 def _coerce_config(config: dict[str, Any] | None) -> SimpleNamespace:
     """Apply adapter defaults so direct factory usage matches YAML usage."""
-    provided = config or {}
     values: dict[str, Any] = {
         "endpoint": os.environ.get("AZURE_SEARCH_ENDPOINT"),
         "api_key": os.environ.get("AZURE_SEARCH_API_KEY"),
         "embed_base_url": os.environ.get("AIQ_EMBED_BASE_URL") or "https://integrate.api.nvidia.com/v1",
         "embed_model": os.environ.get("AIQ_EMBED_MODEL", "nvidia/llama-nemotron-embed-vl-1b-v2"),
         "embed_dim": int(os.environ.get("AIQ_EMBED_DIM", "2048")),
-        "use_hybrid": True,
-        "use_semantic_ranker": False,
-        "chunk_size": 512,
-        "chunk_overlap": 64,
-        "summary_max_chars": 1000,
         "collection_name": "default",
         "cleanup_files": False,
         "generate_summary": False,
@@ -98,13 +97,9 @@ def _coerce_config(config: dict[str, Any] | None) -> SimpleNamespace:
         "index_prefix": os.environ.get("AIQ_AZURE_SEARCH_INDEX_PREFIX", "aiq"),
         "start_ttl_cleanup": True,
     }
-    values.update(provided)
+    values.update({key: value for key, value in (config or {}).items() if key in values})
     if not values["endpoint"]:
         raise ValueError("Azure AI Search configuration requires `endpoint`")
-    if values["chunk_overlap"] >= values["chunk_size"]:
-        raise ValueError("chunk_overlap must be smaller than chunk_size")
-    if not values["use_hybrid"] and values["use_semantic_ranker"]:
-        raise ValueError("use_semantic_ranker=true requires use_hybrid=true")
     return SimpleNamespace(**values)
 
 
@@ -143,14 +138,16 @@ def _sanitize_index_part(value: str, fallback: str = "default") -> str:
     return normalized or fallback
 
 
-def _index_name_for_collection(collection_name: str, prefix: str = "aiq") -> str:
-    """Map a logical collection to an official, collision-safe Azure index name."""
-    prefix_part = _sanitize_index_part(prefix, "aiq")[:48].rstrip("-") or "aiq"
-    collection_part = _sanitize_index_part(collection_name)
-    suffix = uuid.uuid5(uuid.NAMESPACE_URL, f"{prefix}\0{collection_name}").hex[:12]
-    available = _MAX_INDEX_NAME_LENGTH - len(prefix_part) - len(suffix) - 2
-    collection_part = collection_part[:available].rstrip("-") or "default"
-    return f"{prefix_part}-{collection_part}-{suffix}"
+def _index_name_for_config(prefix: str, embed_model: str, embed_dim: int) -> str:
+    """Map one deployment and embedding schema to one physical Azure index."""
+    suffix = uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"{_SCHEMA_VERSION}\0{prefix}\0{embed_model}\0{embed_dim}",
+    ).hex[:12]
+    tail = f"knowledge-v{_SCHEMA_VERSION}-{suffix}"
+    available = _MAX_INDEX_NAME_LENGTH - len(tail) - 1
+    prefix_part = _sanitize_index_part(prefix, "aiq")[:available].rstrip("-") or "aiq"
+    return f"{prefix_part}-{tail}"
 
 
 def _validate_index_name(name: str) -> None:
@@ -162,7 +159,10 @@ def _validate_index_name(name: str) -> None:
 
 
 def _encode_marker(marker: dict[str, Any]) -> str:
-    return _MARKER_PREFIX + json.dumps(marker, separators=(",", ":"), sort_keys=True)
+    encoded = _MARKER_PREFIX + json.dumps(marker, separators=(",", ":"), sort_keys=True)
+    if len(encoded) > _MARKER_MAX_CHARS:
+        raise ValueError(f"Azure AI Search ownership marker exceeds {_MARKER_MAX_CHARS} characters")
+    return encoded
 
 
 def _decode_marker(description: str | None) -> dict[str, Any] | None:
@@ -175,26 +175,22 @@ def _decode_marker(description: str | None) -> dict[str, Any] | None:
     return marker if isinstance(marker, dict) else None
 
 
-def _new_marker(
-    collection_name: str,
-    cfg: SimpleNamespace,
-    description: str | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    now = _utc_now().isoformat()
+def _new_marker(cfg: SimpleNamespace) -> dict[str, Any]:
     marker = {
         "backend": _BACKEND_NAME,
         "schema_version": _SCHEMA_VERSION,
-        "collection_name": collection_name,
-        "description": description,
-        "metadata": metadata or {},
+        "index_prefix": cfg.index_prefix,
         "embedding_model": cfg.embed_model,
         "embedding_dim": cfg.embed_dim,
-        "created_at": now,
-        "updated_at": now,
+        "created_at": _utc_now().isoformat(),
     }
-    _encode_marker(marker)  # Validate JSON serializability before any service mutation.
+    _encode_marker(marker)
     return marker
+
+
+def _record_id(record_type: str, collection_name: str, file_id: str | None = None) -> str:
+    value = f"{record_type}\0{collection_name}\0{file_id or ''}"
+    return f"{record_type}-{uuid.uuid5(uuid.NAMESPACE_URL, value).hex}"
 
 
 def _odata_literal(value: str) -> str:
@@ -204,6 +200,26 @@ def _odata_literal(value: str) -> str:
 def _and_filter(*filters: str | None) -> str | None:
     values = [f"({value})" for value in filters if value]
     return " and ".join(values) or None
+
+
+def _record_filter(
+    record_type: str,
+    collection_name: str | None = None,
+    *,
+    file_id: str | None = None,
+    file_name: str | None = None,
+    status: str | None = None,
+) -> str:
+    return (
+        _and_filter(
+            f"record_type eq {_odata_literal(record_type)}",
+            f"collection_id eq {_odata_literal(collection_name)}" if collection_name is not None else None,
+            f"file_id eq {_odata_literal(file_id)}" if file_id is not None else None,
+            f"file_name eq {_odata_literal(file_name)}" if file_name is not None else None,
+            f"status eq {_odata_literal(status)}" if status is not None else None,
+        )
+        or ""
+    )
 
 
 def _parse_metadata(value: Any) -> dict[str, Any]:
@@ -279,6 +295,14 @@ def _build_index_schema(name: str, embed_dim: int, description: str | None = Non
                 filterable=True,
                 sortable=True,
             ),
+            SimpleField(
+                name="record_type",
+                type=SearchFieldDataType.String,
+                filterable=True,
+                facetable=True,
+                sortable=True,
+            ),
+            SimpleField(name="collection_id", type=SearchFieldDataType.String, filterable=True, sortable=True),
             SearchableField(name="chunk", analyzer_name="standard.lucene"),
             SearchField(
                 name="embedding",
@@ -289,9 +313,16 @@ def _build_index_schema(name: str, embed_dim: int, description: str | None = Non
             ),
             SimpleField(name="file_id", type=SearchFieldDataType.String, filterable=True, sortable=True),
             SearchableField(name="file_name", filterable=True, sortable=True),
+            SimpleField(name="status", type=SearchFieldDataType.String, filterable=True, sortable=True),
+            SimpleField(name="error_message", type=SearchFieldDataType.String),
+            SimpleField(name="description", type=SearchFieldDataType.String),
+            SimpleField(name="summary", type=SearchFieldDataType.String),
             SimpleField(name="page_number", type=SearchFieldDataType.Int32, filterable=True, sortable=True),
             SimpleField(name="chunk_index", type=SearchFieldDataType.Int32, filterable=True, sortable=True),
+            SimpleField(name="chunk_count", type=SearchFieldDataType.Int32),
             SimpleField(name="file_size", type=SearchFieldDataType.Int64, filterable=True),
+            SimpleField(name="created_at", type=SearchFieldDataType.DateTimeOffset, filterable=True, sortable=True),
+            SimpleField(name="updated_at", type=SearchFieldDataType.DateTimeOffset, filterable=True, sortable=True),
             SimpleField(name="uploaded_at", type=SearchFieldDataType.DateTimeOffset, filterable=True, sortable=True),
             SimpleField(name="ingested_at", type=SearchFieldDataType.DateTimeOffset, filterable=True, sortable=True),
             SimpleField(name="metadata", type=SearchFieldDataType.String),
@@ -310,48 +341,41 @@ def _build_index_schema(name: str, embed_dim: int, description: str | None = Non
             ],
             profiles=[VectorSearchProfile(name="hnsw-profile", algorithm_configuration_name="hnsw-default")],
         ),
-        semantic_search=SemanticSearch(
-            default_configuration_name=_SEMANTIC_CONFIG,
-            configurations=[
-                SemanticConfiguration(
-                    name=_SEMANTIC_CONFIG,
-                    prioritized_fields=SemanticPrioritizedFields(
-                        title_field=SemanticField(field_name="file_name"),
-                        content_fields=[SemanticField(field_name="chunk")],
-                    ),
-                ),
-            ],
-        ),
     )
 
 
-def _validate_index_schema(index: SearchIndex, collection_name: str, cfg: SimpleNamespace) -> dict[str, Any]:
+def _validate_index_schema(index: SearchIndex, cfg: SimpleNamespace) -> dict[str, Any]:
     marker = _decode_marker(index.description)
     if marker is None:
         raise RuntimeError(f"Azure AI Search index {index.name!r} is not owned by AI-Q")
     if marker.get("backend") != _BACKEND_NAME or marker.get("schema_version") != _SCHEMA_VERSION:
         raise RuntimeError(f"Azure AI Search index {index.name!r} has an incompatible AI-Q ownership marker")
-    if marker.get("collection_name") != collection_name:
-        raise RuntimeError(
-            f"Azure AI Search index {index.name!r} belongs to collection {marker.get('collection_name')!r}, "
-            f"not {collection_name!r}"
-        )
-    if marker.get("embedding_dim") != cfg.embed_dim or marker.get("embedding_model") != cfg.embed_model:
-        raise RuntimeError(
-            f"Azure AI Search index {index.name!r} embedding configuration does not match "
-            f"{cfg.embed_model!r}/{cfg.embed_dim}"
-        )
+    if (
+        marker.get("index_prefix") != cfg.index_prefix
+        or marker.get("embedding_dim") != cfg.embed_dim
+        or marker.get("embedding_model") != cfg.embed_model
+    ):
+        raise RuntimeError(f"Azure AI Search index {index.name!r} ownership or embedding configuration does not match")
 
     fields = {field.name: field for field in index.fields}
     required_types = {
         "id": SearchFieldDataType.String,
+        "record_type": SearchFieldDataType.String,
+        "collection_id": SearchFieldDataType.String,
         "chunk": SearchFieldDataType.String,
         "embedding": SearchFieldDataType.Collection(SearchFieldDataType.Single),
         "file_id": SearchFieldDataType.String,
         "file_name": SearchFieldDataType.String,
+        "status": SearchFieldDataType.String,
+        "error_message": SearchFieldDataType.String,
+        "description": SearchFieldDataType.String,
+        "summary": SearchFieldDataType.String,
         "page_number": SearchFieldDataType.Int32,
         "chunk_index": SearchFieldDataType.Int32,
+        "chunk_count": SearchFieldDataType.Int32,
         "file_size": SearchFieldDataType.Int64,
+        "created_at": SearchFieldDataType.DateTimeOffset,
+        "updated_at": SearchFieldDataType.DateTimeOffset,
         "uploaded_at": SearchFieldDataType.DateTimeOffset,
         "ingested_at": SearchFieldDataType.DateTimeOffset,
         "metadata": SearchFieldDataType.String,
@@ -366,23 +390,16 @@ def _validate_index_schema(index: SearchIndex, collection_name: str, cfg: Simple
         )
     if not fields["id"].key or not fields["id"].filterable or not fields["id"].sortable:
         raise RuntimeError(f"Azure AI Search index {index.name!r} requires id to be key/filterable/sortable")
-    if not fields["file_id"].filterable or not fields["file_name"].filterable:
-        raise RuntimeError(f"Azure AI Search index {index.name!r} requires filterable file identity fields")
+    if not fields["record_type"].filterable or not fields["record_type"].facetable:
+        raise RuntimeError(f"Azure AI Search index {index.name!r} requires facetable record_type")
+    if not fields["collection_id"].filterable or not fields["file_id"].filterable:
+        raise RuntimeError(f"Azure AI Search index {index.name!r} requires filterable identity fields")
     embedding = fields["embedding"]
     if embedding.vector_search_dimensions != cfg.embed_dim or embedding.vector_search_profile_name != "hnsw-profile":
         raise RuntimeError(f"Azure AI Search index {index.name!r} vector profile or dimensions do not match")
     profile_names = {profile.name for profile in (index.vector_search.profiles if index.vector_search else [])}
     if "hnsw-profile" not in profile_names:
         raise RuntimeError(f"Azure AI Search index {index.name!r} is missing hnsw-profile")
-    semantic_names = {
-        semantic.name for semantic in (index.semantic_search.configurations if index.semantic_search else [])
-    }
-    if cfg.use_semantic_ranker and (
-        index.semantic_search is None
-        or index.semantic_search.default_configuration_name != _SEMANTIC_CONFIG
-        or _SEMANTIC_CONFIG not in semantic_names
-    ):
-        raise RuntimeError(f"Azure AI Search index {index.name!r} semantic configuration does not match")
     return marker
 
 
@@ -391,13 +408,15 @@ class _AzureIndexMixin:
     _credential: Any
     _embedding: Any
     _index_client: SearchIndexClient
-    _search_clients: dict[str, SearchClient]
+    _search_client: SearchClient | None
+    _index_validated: bool
 
     def _initialize_azure(self, config: dict[str, Any]) -> None:
         self.cfg = _coerce_config(config)
         self._credential = _build_search_credential(self.cfg)
         self._index_client = SearchIndexClient(endpoint=str(self.cfg.endpoint), credential=self._credential)
-        self._search_clients = {}
+        self._search_client = None
+        self._index_validated = False
         self._embedding = None
 
     @property
@@ -411,37 +430,74 @@ class _AzureIndexMixin:
             )
         return self._embedding
 
-    def _physical_index_name(self, collection_name: str) -> str:
-        name = _index_name_for_collection(collection_name, self.cfg.index_prefix)
+    def _physical_index_name(self) -> str:
+        name = _index_name_for_config(self.cfg.index_prefix, self.cfg.embed_model, self.cfg.embed_dim)
         _validate_index_name(name)
         return name
 
-    def _get_search_client(self, collection_name: str) -> SearchClient:
-        if collection_name not in self._search_clients:
-            self._search_clients[collection_name] = self._index_client.get_search_client(
-                self._physical_index_name(collection_name)
-            )
-        return self._search_clients[collection_name]
+    def _get_search_client(self) -> SearchClient:
+        if self._search_client is None:
+            self._search_client = self._index_client.get_search_client(self._physical_index_name())
+        return self._search_client
+
+    def _get_owned_index(self) -> tuple[SearchIndex, dict[str, Any]]:
+        index = self._index_client.get_index(self._physical_index_name())
+        return index, _validate_index_schema(index, self.cfg)
+
+    def _ensure_index(self) -> tuple[SearchIndex, dict[str, Any]]:
+        try:
+            index, marker = self._get_owned_index()
+        except ResourceNotFoundError:
+            marker = _new_marker(self.cfg)
+            schema = _build_index_schema(self._physical_index_name(), self.cfg.embed_dim, _encode_marker(marker))
+            try:
+                index = self._index_client.create_index(schema)
+            except Exception as create_error:  # noqa: BLE001
+                try:
+                    index = self._index_client.get_index(self._physical_index_name())
+                except ResourceNotFoundError:
+                    raise create_error
+            marker = _validate_index_schema(index, self.cfg)
+        self._index_validated = True
+        return index, marker
+
+    def _get_validated_search_client(self) -> SearchClient:
+        if not self._index_validated:
+            self._get_owned_index()
+            self._index_validated = True
+        return self._get_search_client()
+
+    def _get_document(self, document_id: str) -> dict[str, Any] | None:
+        try:
+            return dict(self._get_validated_search_client().get_document(key=document_id))
+        except ResourceNotFoundError:
+            return None
+
+    def _get_collection_manifest(self, collection_name: str) -> dict[str, Any] | None:
+        document = self._get_document(_record_id(_RECORD_COLLECTION, collection_name))
+        if (
+            document
+            and document.get("record_type") == _RECORD_COLLECTION
+            and document.get("collection_id") == collection_name
+        ):
+            return document
+        return None
 
 
 @register_retriever(_BACKEND_NAME)
 class AzureAISearchRetriever(_AzureIndexMixin, BaseRetriever):
-    """Hybrid and semantic-ranked retriever backed by owned Azure indexes."""
+    """Hybrid retriever backed by one owned Azure index."""
 
     backend_name = _BACKEND_NAME
 
     def __init__(self, config: dict[str, Any] | None = None):
         super().__init__(config)
         self._initialize_azure(self.config)
-        self._validated: set[str] = set()
 
     def _get_client(self, collection_name: str) -> SearchClient:
-        index_name = self._physical_index_name(collection_name)
-        if collection_name not in self._validated:
-            index = self._index_client.get_index(index_name)
-            _validate_index_schema(index, collection_name, self.cfg)
-            self._validated.add(collection_name)
-        return self._get_search_client(collection_name)
+        if self._get_collection_manifest(collection_name) is None:
+            raise ResourceNotFoundError(f"Collection {collection_name!r} not found")
+        return self._get_validated_search_client()
 
     async def retrieve(
         self,
@@ -468,23 +524,20 @@ class AzureAISearchRetriever(_AzureIndexMixin, BaseRetriever):
                 error_message="Raw Azure AI Search $filter expressions are not supported",
             )
         try:
-            query_vector = self.embedding.get_query_embedding(query)
             client = self._get_client(collection_name)
+            query_vector = self.embedding.get_query_embedding(query)
             vector_query = VectorizedQuery(
                 vector=query_vector,
                 k_nearest_neighbors=max(top_k * 3, 20),
                 fields="embedding",
             )
             search_params: dict[str, Any] = {
+                "search_text": query,
                 "vector_queries": [vector_query],
+                "filter": _record_filter(_RECORD_CHUNK, collection_name),
                 "top": top_k,
                 "select": ["id", "chunk", "file_id", "file_name", "page_number", "metadata"],
             }
-            if self.cfg.use_hybrid:
-                search_params["search_text"] = query
-            if self.cfg.use_semantic_ranker:
-                search_params["query_type"] = "semantic"
-                search_params["semantic_configuration_name"] = _SEMANTIC_CONFIG
             chunks = [self.normalize(hit) for hit in client.search(**search_params)]
             return RetrievalResult(query=query, backend=_BACKEND_NAME, chunks=chunks, success=True)
         except ResourceNotFoundError:
@@ -505,9 +558,8 @@ class AzureAISearchRetriever(_AzureIndexMixin, BaseRetriever):
         content = raw_result.get("chunk") or ""
         file_name = raw_result.get("file_name") or "unknown"
         page_number = _coerce_page_number(raw_result.get("page_number"))
-        rerank_score = raw_result.get("@search.reranker_score")
         search_score = raw_result.get("@search.score") or 0.0
-        score = float(rerank_score) / 4.0 if rerank_score is not None else float(search_score)
+        score = float(search_score)
         score = min(max(score, 0.0), 1.0)
         metadata = _parse_metadata(raw_result.get("metadata"))
         if file_id := raw_result.get("file_id"):
@@ -549,6 +601,8 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
         self._jobs_lock = threading.RLock()
         self._jobs: dict[str, IngestionJobStatus] = {}
         self._files: dict[str, FileInfo] = {}
+        self._deleted_collections: set[str] = set()
+        self._deleted_files: set[tuple[str, str]] = set()
         if self.cfg.start_ttl_cleanup:
             self._start_ttl_cleanup_task(COLLECTION_TTL_HOURS, TTL_CLEANUP_INTERVAL_SECONDS)
 
@@ -557,51 +611,142 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
         if self._splitter is None:
             from llama_index.core.node_parser import SentenceSplitter
 
-            self._splitter = SentenceSplitter(chunk_size=self.cfg.chunk_size, chunk_overlap=self.cfg.chunk_overlap)
+            self._splitter = SentenceSplitter(chunk_size=_CHUNK_SIZE, chunk_overlap=_CHUNK_OVERLAP)
         return self._splitter
 
-    def _get_owned_index(self, collection_name: str) -> tuple[SearchIndex, dict[str, Any]]:
-        index = self._index_client.get_index(self._physical_index_name(collection_name))
-        return index, _validate_index_schema(index, collection_name, self.cfg)
+    def _write_document(self, document: dict[str, Any]) -> None:
+        self._upload_documents(self._get_validated_search_client(), [document])
 
-    def _ensure_index(
+    def _wait_for_search_state(self, filter_text: str, *, present: bool, label: str) -> None:
+        client = self._get_validated_search_client()
+        for attempt in range(_CONSISTENCY_ATTEMPTS):
+            found = bool(list(client.search(search_text="*", filter=filter_text, select=["id"], top=1)))
+            if found == present:
+                return
+            if attempt + 1 < _CONSISTENCY_ATTEMPTS:
+                time.sleep(_CONSISTENCY_DELAY_SECONDS)
+        state = "visible" if present else "absent"
+        raise RuntimeError(f"Timed out waiting for {label} to become {state} in Azure AI Search")
+
+    def _write_collection_manifest(
         self,
         collection_name: str,
         description: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> tuple[SearchIndex, dict[str, Any]]:
-        index_name = self._physical_index_name(collection_name)
-        try:
-            return self._get_owned_index(collection_name)
-        except ResourceNotFoundError:
-            pass
-
-        marker = _new_marker(collection_name, self.cfg, description, metadata)
-        schema = _build_index_schema(index_name, self.cfg.embed_dim, _encode_marker(marker))
-        try:
-            index = self._index_client.create_index(schema)
-        except Exception as create_error:  # noqa: BLE001
-            try:
-                index = self._index_client.get_index(index_name)
-            except ResourceNotFoundError:
-                raise create_error
-        return index, _validate_index_schema(index, collection_name, self.cfg)
-
-    def _update_marker(self, collection_name: str, **updates: Any) -> dict[str, Any]:
-        for attempt in range(3):
-            index, marker = self._get_owned_index(collection_name)
-            marker.update(updates)
-            index.description = _encode_marker(marker)
-            try:
-                self._index_client.create_or_update_index(index, match_condition=MatchConditions.IfNotModified)
-                return marker
-            except (ResourceModifiedError, HttpResponseError) as error:
-                if getattr(error, "status_code", None) != 412 or attempt == 2:
-                    raise
-        raise RuntimeError(f"Failed to update metadata for collection {collection_name!r}")
+        *,
+        status: str = _COLLECTION_ACTIVE,
+    ) -> dict[str, Any]:
+        self._ensure_index()
+        existing = self._get_collection_manifest(collection_name) or {}
+        if status == _COLLECTION_ACTIVE and existing.get("status") == _COLLECTION_DELETING:
+            raise ValueError(f"Collection {collection_name!r} is being deleted")
+        now = _utc_now()
+        existing_metadata = _parse_metadata(existing.get("metadata"))
+        merged_metadata = {**existing_metadata, **(metadata or {})}
+        document = {
+            "id": _record_id(_RECORD_COLLECTION, collection_name),
+            "record_type": _RECORD_COLLECTION,
+            "collection_id": collection_name,
+            "status": status,
+            "description": description if description is not None else existing.get("description"),
+            "metadata": json.dumps(merged_metadata, separators=(",", ":"), sort_keys=True),
+            "created_at": _parse_timestamp(existing.get("created_at")) or now,
+            "updated_at": now,
+        }
+        self._write_document(document)
+        if status == _COLLECTION_ACTIVE:
+            self._deleted_collections.discard(collection_name)
+        return document
 
     def _update_collection_timestamp(self, collection_name: str) -> None:
-        self._update_marker(collection_name, updated_at=_utc_now().isoformat())
+        manifest = self._get_collection_manifest(collection_name)
+        if manifest is None or manifest.get("status") != _COLLECTION_ACTIVE:
+            raise ResourceNotFoundError(f"Collection {collection_name!r} not found")
+        manifest["updated_at"] = _utc_now()
+        self._write_document(manifest)
+
+    def _get_file_manifest(self, file_id: str, collection_name: str) -> dict[str, Any] | None:
+        documents = list(
+            self._get_validated_search_client().search(
+                search_text="*",
+                filter=_record_filter(_RECORD_FILE, collection_name, file_id=file_id),
+                top=1,
+            )
+        )
+        return dict(documents[0]) if documents else None
+
+    def _write_file_manifest(self, info: FileInfo, *, summary: str | None = None) -> dict[str, Any]:
+        metadata = {key: value for key, value in info.metadata.items() if key not in {"job_id", "summary"}}
+        document = {
+            "id": _record_id(_RECORD_FILE, info.collection_name, info.file_id),
+            "record_type": _RECORD_FILE,
+            "collection_id": info.collection_name,
+            "file_id": info.file_id,
+            "file_name": info.file_name,
+            "status": info.status.value,
+            "error_message": info.error_message,
+            "summary": summary or info.metadata.get("summary"),
+            "chunk_count": info.chunk_count,
+            "file_size": info.file_size,
+            "uploaded_at": info.uploaded_at,
+            "ingested_at": info.ingested_at,
+            "metadata": json.dumps(metadata, separators=(",", ":"), sort_keys=True),
+        }
+        self._write_document(document)
+        self._deleted_files.discard((info.collection_name, info.file_id))
+        return document
+
+    @staticmethod
+    def _file_info_from_manifest(document: dict[str, Any]) -> FileInfo:
+        metadata = _parse_metadata(document.get("metadata"))
+        if summary := document.get("summary"):
+            metadata["summary"] = summary
+        try:
+            status = FileStatus(document.get("status"))
+        except ValueError:
+            status = FileStatus.FAILED
+        return FileInfo(
+            file_id=str(document.get("file_id") or ""),
+            file_name=str(document.get("file_name") or "unknown"),
+            collection_name=str(document.get("collection_id") or ""),
+            status=status,
+            error_message=document.get("error_message"),
+            file_size=document.get("file_size"),
+            chunk_count=int(document.get("chunk_count") or 0),
+            uploaded_at=_parse_timestamp(document.get("uploaded_at")),
+            ingested_at=_parse_timestamp(document.get("ingested_at")),
+            metadata=metadata,
+        )
+
+    def _collection_counts(self, collection_name: str) -> tuple[int, int]:
+        results = self._get_validated_search_client().search(
+            search_text="*",
+            filter=f"collection_id eq {_odata_literal(collection_name)}",
+            facets=["record_type,count:0"],
+            top=0,
+        )
+        facets = results.get_facets() or {}
+        counts = {str(item.get("value")): int(item.get("count") or 0) for item in facets.get("record_type", [])}
+        return counts.get(_RECORD_FILE, 0), counts.get(_RECORD_CHUNK, 0)
+
+    def _collection_info(self, manifest: dict[str, Any]) -> CollectionInfo:
+        name = str(manifest["collection_id"])
+        file_count, chunk_count = self._collection_counts(name)
+        return CollectionInfo(
+            name=name,
+            description=manifest.get("description"),
+            file_count=file_count,
+            chunk_count=chunk_count,
+            backend=_BACKEND_NAME,
+            metadata={
+                **_parse_metadata(manifest.get("metadata")),
+                "index_name": self._physical_index_name(),
+                "embedding_model": self.cfg.embed_model,
+                "embedding_dim": self.cfg.embed_dim,
+            },
+            created_at=_parse_timestamp(manifest.get("created_at")),
+            updated_at=_parse_timestamp(manifest.get("updated_at")),
+        )
 
     def submit_job(
         self,
@@ -614,7 +759,7 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
         original_filenames = _resolve_filenames(file_paths, job_config.get("original_filenames"))
         validated = [(path, original_filenames[index]) for index, path in enumerate(file_paths) if Path(path).is_file()]
         file_metadata = job_config.get("metadata") or {}
-        _encode_marker({"metadata": file_metadata})
+        json.dumps(file_metadata, separators=(",", ":"), sort_keys=True)
 
         if not validated:
             with self._jobs_lock:
@@ -630,21 +775,30 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
                 )
             return job_id
 
+        self._ensure_index()
+        collection = self._get_collection_manifest(collection_name)
+        if collection is None:
+            self._write_collection_manifest(collection_name)
+        elif collection.get("status") != _COLLECTION_ACTIVE:
+            raise ValueError(f"Collection {collection_name!r} is being deleted")
+
         submitted_at = _utc_now()
         file_progress: list[FileProgress] = []
         for path, file_name in validated:
             file_id = str(uuid.uuid4())
             file_progress.append(FileProgress(file_id=file_id, file_name=file_name, status=FileStatus.UPLOADING))
+            info = FileInfo(
+                file_id=file_id,
+                file_name=file_name,
+                collection_name=collection_name,
+                status=FileStatus.UPLOADING,
+                file_size=Path(path).stat().st_size,
+                uploaded_at=submitted_at,
+                metadata={**file_metadata, "job_id": job_id},
+            )
             with self._jobs_lock:
-                self._files[file_id] = FileInfo(
-                    file_id=file_id,
-                    file_name=file_name,
-                    collection_name=collection_name,
-                    status=FileStatus.UPLOADING,
-                    file_size=Path(path).stat().st_size,
-                    uploaded_at=submitted_at,
-                    metadata={**file_metadata, "job_id": job_id},
-                )
+                self._files[file_id] = info
+            self._write_file_manifest(info)
 
         with self._jobs_lock:
             self._jobs[job_id] = IngestionJobStatus(
@@ -689,10 +843,9 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
     ) -> None:
         cleanup = bool(config.get("cleanup_files", self.cfg.cleanup_files))
         self._update_job(job_id, status=JobState.PROCESSING, started_at=_utc_now())
-        try:
-            self._ensure_index(collection_name)
-        except Exception as error:  # noqa: BLE001
-            self._fail_job(job_id, f"Failed to ensure collection {collection_name!r}: {error!s}")
+        collection = self._get_collection_manifest(collection_name)
+        if collection is None or collection.get("status") != _COLLECTION_ACTIVE:
+            self._fail_job(job_id, f"Collection {collection_name!r} is unavailable")
             if cleanup:
                 self._cleanup_paths(file_paths)
             return
@@ -704,7 +857,7 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
             tracked = self._files[detail.file_id]
             self._update_file_progress(job_id, index, status=FileStatus.INGESTING)
             try:
-                chunk_count = self._process_file(
+                chunk_count, summary, ingested_at = self._process_file(
                     path=path,
                     collection_name=collection_name,
                     file_id=detail.file_id,
@@ -719,11 +872,24 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
                     status=FileStatus.SUCCESS,
                     progress_percent=100.0,
                     chunks_created=chunk_count,
+                    summary=summary,
+                    ingested_at=ingested_at,
                 )
             except Exception as error:  # noqa: BLE001
                 failed += 1
                 message = self._translate_error(error)
-                self._update_file_progress(job_id, index, status=FileStatus.FAILED, error_message=message)
+                try:
+                    self._delete_file_documents(detail.file_id, collection_name)
+                except Exception as rollback_error:  # noqa: BLE001
+                    message = f"{message}; chunk rollback failed: {self._translate_error(rollback_error)}"
+                self._update_file_progress(
+                    job_id,
+                    index,
+                    status=FileStatus.FAILED,
+                    progress_percent=0.0,
+                    chunks_created=0,
+                    error_message=message,
+                )
                 logger.exception("Failed to ingest %s", detail.file_name)
             finally:
                 if cleanup:
@@ -745,10 +911,9 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
         file_size: int,
         uploaded_at: datetime,
         metadata: dict[str, Any],
-    ) -> int:
+    ) -> tuple[int, str | None, datetime]:
         from llama_index.core import SimpleDirectoryReader
 
-        old_file_ids = self._find_file_ids_by_name(file_name, collection_name) - {file_id}
         documents = SimpleDirectoryReader(input_files=[path]).load_data()
         if not documents:
             raise ValueError(f"No content extracted from {file_name}")
@@ -766,7 +931,9 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
         for chunk_index, (node, vector) in enumerate(zip(nodes, embeddings, strict=True)):
             search_documents.append(
                 {
-                    "id": f"{file_id}-{chunk_index:08d}",
+                    "id": f"chunk-{file_id}-{chunk_index:08d}",
+                    "record_type": _RECORD_CHUNK,
+                    "collection_id": collection_name,
                     "chunk": node.get_content(),
                     "embedding": list(vector),
                     "file_id": file_id,
@@ -780,29 +947,16 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
                 }
             )
 
-        client = self._get_search_client(collection_name)
+        client = self._get_validated_search_client()
         self._upload_documents(client, search_documents)
-        self._update_collection_timestamp(collection_name)
-        for old_file_id in old_file_ids:
-            self._delete_file_documents(old_file_id, collection_name)
-            with self._jobs_lock:
-                self._files.pop(old_file_id, None)
+        collection = self._get_collection_manifest(collection_name)
+        if collection is None or collection.get("status") != _COLLECTION_ACTIVE:
+            self._delete_document_ids(client, [str(document["id"]) for document in search_documents])
+            raise RuntimeError(f"Collection {collection_name!r} became unavailable during ingestion")
 
         summary = self._generate_summary("\n".join(texts), file_name) if self.cfg.generate_summary else None
-        if summary:
-            register_summary(collection_name, file_name, summary)
-        elif self.cfg.generate_summary and old_file_ids:
-            unregister_summary(collection_name, file_name)
-
-        with self._jobs_lock:
-            tracked = self._files.get(file_id)
-            if tracked:
-                tracked.status = FileStatus.SUCCESS
-                tracked.chunk_count = len(search_documents)
-                tracked.ingested_at = ingested_at
-                if summary:
-                    tracked.metadata["summary"] = summary
-        return len(search_documents)
+        self._update_collection_timestamp(collection_name)
+        return len(search_documents), summary, ingested_at
 
     def _upload_documents(self, client: SearchClient, documents: list[dict[str, Any]]) -> None:
         uploaded_ids: list[str] = []
@@ -866,18 +1020,9 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
                 raise RuntimeError("Azure AI Search pagination did not advance")
             last_id = next_id
 
-    def _find_file_ids_by_name(self, file_name: str, collection_name: str) -> set[str]:
-        client = self._get_search_client(collection_name)
-        filter_text = f"file_name eq {_odata_literal(file_name)}"
-        return {
-            str(hit["file_id"])
-            for hit in self._iter_documents(client, filter_text=filter_text, select=["id", "file_id"])
-            if hit.get("file_id")
-        }
-
     def _delete_file_documents(self, file_id: str, collection_name: str) -> int:
-        client = self._get_search_client(collection_name)
-        filter_text = f"file_id eq {_odata_literal(file_id)}"
+        client = self._get_validated_search_client()
+        filter_text = _record_filter(_RECORD_CHUNK, collection_name, file_id=file_id)
         ids = [
             str(hit["id"])
             for hit in self._iter_documents(client, filter_text=filter_text, select=["id"])
@@ -890,7 +1035,7 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
     def _generate_summary(self, text: str, file_name: str) -> str | None:
         if self._summary_llm is None:
             return None
-        snippet = text[: self.cfg.summary_max_chars]
+        snippet = text[:_SUMMARY_MAX_CHARS]
         prompt = f"Summarise the following document ({file_name}) in one sentence (max 30 words):\n\n{snippet}"
         try:
             response = self._summary_llm.invoke(prompt)
@@ -910,6 +1055,9 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
         self._update_job(job_id, status=JobState.FAILED, error_message=error_message, completed_at=_utc_now())
 
     def _update_file_progress(self, job_id: str, index: int, **fields: Any) -> None:
+        summary = fields.pop("summary", None)
+        ingested_at = fields.pop("ingested_at", None)
+        snapshot: FileInfo | None = None
         with self._jobs_lock:
             job = self._jobs.get(job_id)
             if job is None or index >= len(job.file_details):
@@ -922,8 +1070,19 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
                 tracked.error_message = details[index].error_message
                 tracked.chunk_count = details[index].chunks_created
                 if tracked.status == FileStatus.SUCCESS:
-                    tracked.ingested_at = _utc_now()
+                    tracked.ingested_at = ingested_at or _utc_now()
+                    if summary:
+                        tracked.metadata["summary"] = summary
+                else:
+                    tracked.ingested_at = None
+                    tracked.metadata.pop("summary", None)
+                snapshot = tracked.model_copy(deep=True)
             self._jobs[job_id] = job.model_copy(update={"file_details": details})
+        if snapshot and (collection := self._get_collection_manifest(snapshot.collection_name)):
+            if collection.get("status") == _COLLECTION_ACTIVE:
+                self._write_file_manifest(snapshot, summary=summary)
+                if snapshot.status == FileStatus.SUCCESS and summary:
+                    register_summary(snapshot.collection_name, snapshot.file_name, summary)
 
     @staticmethod
     def _cleanup_paths(paths: list[str]) -> None:
@@ -951,76 +1110,71 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
         description: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> CollectionInfo:
-        index, marker = self._ensure_index(name, description, metadata)
-        if description is not None or metadata:
-            marker = self._update_marker(
-                name,
-                description=description if description is not None else marker.get("description"),
-                metadata={**(marker.get("metadata") or {}), **(metadata or {})},
-                updated_at=_utc_now().isoformat(),
-            )
-        return self._collection_info(name, index, marker)
+        manifest = self._write_collection_manifest(name, description, metadata)
+        self._wait_for_search_state(
+            _record_filter(_RECORD_COLLECTION, name, status=_COLLECTION_ACTIVE),
+            present=True,
+            label=f"collection {name!r}",
+        )
+        return self._collection_info(manifest)
 
     def delete_collection(self, name: str) -> bool:
-        try:
-            index, _marker = self._get_owned_index(name)
-        except ResourceNotFoundError:
+        manifest = self._get_collection_manifest(name)
+        if manifest is None:
             return False
-        self._index_client.delete_index(index.name)
-        try:
-            self._index_client.get_index(index.name)
-        except ResourceNotFoundError:
-            pass
-        else:
-            return False
-        self._search_clients.pop(name, None)
+        file_manifests = self._iter_documents(
+            self._get_validated_search_client(),
+            filter_text=_record_filter(_RECORD_FILE, name),
+        )
+        if any(
+            self._file_info_from_manifest(document).status in {FileStatus.UPLOADING, FileStatus.INGESTING}
+            for document in file_manifests
+            if (name, str(document.get("file_id") or "")) not in self._deleted_files
+        ):
+            raise ValueError(f"Cannot delete collection {name!r} while files are ingesting")
+
+        self._write_collection_manifest(name, status=_COLLECTION_DELETING)
+        client = self._get_validated_search_client()
+        content_filter = _and_filter(
+            f"collection_id eq {_odata_literal(name)}",
+            f"record_type ne {_odata_literal(_RECORD_COLLECTION)}",
+        )
+        document_ids = [
+            str(document["id"])
+            for document in self._iter_documents(client, filter_text=content_filter, select=["id"])
+            if document.get("id")
+        ]
+        if document_ids:
+            self._delete_document_ids(client, document_ids)
+        self._delete_document_ids(client, [str(manifest["id"])])
         with self._jobs_lock:
+            self._deleted_collections.add(name)
             self._files = {file_id: info for file_id, info in self._files.items() if info.collection_name != name}
         if self.cfg.generate_summary:
             clear_collection_summaries(name)
         return True
 
     def list_collections(self) -> list[CollectionInfo]:
-        collections: list[CollectionInfo] = []
-        for index in self._index_client.list_indexes():
-            marker = _decode_marker(index.description)
-            if not marker or marker.get("backend") != _BACKEND_NAME or marker.get("schema_version") != _SCHEMA_VERSION:
-                continue
-            collection_name = marker.get("collection_name")
-            if not isinstance(collection_name, str):
-                continue
-            try:
-                _validate_index_schema(index, collection_name, self.cfg)
-                collections.append(self._collection_info(collection_name, index, marker))
-            except Exception:  # noqa: BLE001
-                logger.exception("Skipping invalid AI-Q Azure AI Search index %s", index.name)
-        return collections
+        try:
+            manifests = self._iter_documents(
+                self._get_validated_search_client(),
+                filter_text=_record_filter(_RECORD_COLLECTION, status=_COLLECTION_ACTIVE),
+            )
+            return [
+                self._collection_info(manifest)
+                for manifest in manifests
+                if manifest.get("collection_id") not in self._deleted_collections
+            ]
+        except ResourceNotFoundError:
+            return []
 
     def get_collection(self, name: str) -> CollectionInfo | None:
-        try:
-            index, marker = self._get_owned_index(name)
-        except ResourceNotFoundError:
+        if name in self._deleted_collections:
             return None
-        return self._collection_info(name, index, marker)
-
-    def _collection_info(self, name: str, index: SearchIndex, marker: dict[str, Any]) -> CollectionInfo:
-        client = self._get_search_client(name)
-        files = self.list_files(name)
-        return CollectionInfo(
-            name=name,
-            description=marker.get("description"),
-            file_count=len(files),
-            chunk_count=client.get_document_count(),
-            backend=_BACKEND_NAME,
-            metadata={
-                **(marker.get("metadata") or {}),
-                "index_name": index.name,
-                "embedding_model": marker.get("embedding_model"),
-                "embedding_dim": marker.get("embedding_dim"),
-            },
-            created_at=_parse_timestamp(marker.get("created_at")),
-            updated_at=_parse_timestamp(marker.get("updated_at")),
-        )
+        manifest = self._get_collection_manifest(name)
+        if manifest is None or manifest.get("status") != _COLLECTION_ACTIVE:
+            return None
+        return self._collection_info(manifest)
 
     def upload_file(
         self,
@@ -1052,88 +1206,65 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
         info = self.get_file_status(file_id, collection_name)
         if info is None:
             return False
-        deleted = self._delete_file_documents(file_id, collection_name)
-        if deleted == 0 and info.status not in {FileStatus.FAILED, FileStatus.UPLOADING}:
-            return False
+        if info.status in {FileStatus.UPLOADING, FileStatus.INGESTING}:
+            raise ValueError(f"Cannot delete file {file_id!r} while it is ingesting")
+
+        self._delete_file_documents(file_id, collection_name)
+        self._delete_document_ids(
+            self._get_validated_search_client(),
+            [_record_id(_RECORD_FILE, collection_name, file_id)],
+        )
+        self._deleted_files.add((collection_name, file_id))
+        self._wait_for_search_state(
+            _record_filter(_RECORD_FILE, collection_name, file_id=file_id),
+            present=False,
+            label=f"file {file_id!r}",
+        )
         with self._jobs_lock:
             self._files.pop(file_id, None)
-        if deleted:
-            remaining_same_name = any(
-                item.file_name == info.file_name and item.file_id != file_id
+
+        if self.cfg.generate_summary:
+            remaining = [
+                item
                 for item in self.list_files(collection_name)
-            )
-            if self.cfg.generate_summary and not remaining_same_name:
+                if item.file_name == info.file_name and item.status == FileStatus.SUCCESS
+            ]
+            newest = max(remaining, key=lambda item: item.ingested_at or datetime.min.replace(tzinfo=UTC), default=None)
+            if newest and (summary := newest.metadata.get("summary")):
+                register_summary(collection_name, info.file_name, str(summary))
+            else:
                 unregister_summary(collection_name, info.file_name)
-            self._update_collection_timestamp(collection_name)
+        self._update_collection_timestamp(collection_name)
         return True
 
     def list_files(self, collection_name: str) -> list[FileInfo]:
+        if collection_name in self._deleted_collections:
+            return []
         try:
-            self._get_owned_index(collection_name)
-            client = self._get_search_client(collection_name)
-            hits = self._iter_documents(
-                client,
-                select=[
-                    "id",
-                    "file_id",
-                    "file_name",
-                    "file_size",
-                    "uploaded_at",
-                    "ingested_at",
-                    "metadata",
-                ],
+            collection = self._get_collection_manifest(collection_name)
+            if collection is None:
+                return []
+            manifests = self._iter_documents(
+                self._get_validated_search_client(),
+                filter_text=_record_filter(_RECORD_FILE, collection_name),
             )
-            aggregated: dict[str, dict[str, Any]] = {}
-            for hit in hits:
-                file_id = str(hit.get("file_id") or "")
-                if not file_id:
-                    continue
-                entry = aggregated.setdefault(
-                    file_id,
-                    {
-                        "file_name": hit.get("file_name") or "unknown",
-                        "file_size": hit.get("file_size"),
-                        "uploaded_at": _parse_timestamp(hit.get("uploaded_at")),
-                        "ingested_at": _parse_timestamp(hit.get("ingested_at")),
-                        "metadata": _parse_metadata(hit.get("metadata")),
-                        "chunk_count": 0,
-                    },
-                )
-                entry["chunk_count"] += 1
+            files = [
+                self._file_info_from_manifest(manifest)
+                for manifest in manifests
+                if (collection_name, str(manifest.get("file_id") or "")) not in self._deleted_files
+            ]
         except ResourceNotFoundError:
             return []
         except Exception:  # noqa: BLE001
             logger.exception("Failed to list files for %r", collection_name)
             return []
-
-        files = {
-            file_id: FileInfo(
-                file_id=file_id,
-                file_name=entry["file_name"],
-                collection_name=collection_name,
-                status=FileStatus.SUCCESS,
-                file_size=entry["file_size"],
-                chunk_count=entry["chunk_count"],
-                uploaded_at=entry["uploaded_at"],
-                ingested_at=entry["ingested_at"],
-                metadata=entry["metadata"],
-            )
-            for file_id, entry in aggregated.items()
-        }
-        with self._jobs_lock:
-            for file_id, tracked in self._files.items():
-                if tracked.collection_name == collection_name and (
-                    tracked.status != FileStatus.SUCCESS or file_id not in files
-                ):
-                    files[file_id] = tracked.model_copy(deep=True)
-        return sorted(files.values(), key=lambda item: (item.file_name, item.file_id))
+        return sorted(files, key=lambda item: (item.file_name, item.file_id))
 
     def get_file_status(self, file_id: str, collection_name: str) -> FileInfo | None:
-        with self._jobs_lock:
-            tracked = self._files.get(file_id)
-            if tracked and tracked.collection_name == collection_name and tracked.status != FileStatus.SUCCESS:
-                return tracked.model_copy(deep=True)
-        return next((file_info for file_info in self.list_files(collection_name) if file_info.file_id == file_id), None)
+        if (collection_name, file_id) in self._deleted_files:
+            return None
+        manifest = self._get_file_manifest(file_id, collection_name)
+        return self._file_info_from_manifest(manifest) if manifest else None
 
     async def health_check(self) -> bool:
         def _check() -> bool:

@@ -217,8 +217,8 @@ functions:
 
 ### `knowledge_retrieval`
 
-Semantic search over ingested documents. Supports LlamaIndex (local ChromaDB), Foundational RAG (hosted
-NVIDIA RAG Blueprint), and Azure AI Search.
+Semantic search over ingested documents. Supports LlamaIndex (local ChromaDB), OpenSearch, Foundational RAG
+(hosted NVIDIA RAG Blueprint), and Azure AI Search.
 
 ```yaml
 functions:
@@ -255,8 +255,6 @@ functions:
     _type: knowledge_retrieval
     backend: azure_ai_search
     collection_name: ${COLLECTION_NAME:-test_collection}
-    use_hybrid: true
-    use_semantic_ranker: false
 ```
 
 This example reads `AZURE_SEARCH_ENDPOINT` and `NVIDIA_API_KEY` from the
@@ -265,8 +263,8 @@ environment. `AZURE_SEARCH_API_KEY` is optional; when absent, the adapter uses
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `backend` | `str` | `llamaindex` | Backend type: `llamaindex`, `foundational_rag`, or `azure_ai_search`. |
-| `collection_name` | `str` | `default` | Name of the document collection/index. |
+| `backend` | `str` | `llamaindex` | Backend type: `llamaindex`, `opensearch`, `foundational_rag`, or `azure_ai_search`. |
+| `collection_name` | `str` | `default` | Name of the logical document collection. |
 | `top_k` | `int` | `5` | Number of results to return per query. |
 | `generate_summary` | `bool` | `false` | Generate one-sentence summaries for ingested documents. |
 | `summary_model` | `str` | `None` | LLM reference from `llms` section. Required when `generate_summary: true`. |
@@ -278,15 +276,10 @@ environment. `AZURE_SEARCH_API_KEY` is optional; when absent, the adapter uses
 | `verify_ssl` | `bool` | `true` | Verify SSL certificates. Set `false` for self-signed certs. Foundational RAG backend only. |
 | `azure_search_endpoint` | `URL` | `AZURE_SEARCH_ENDPOINT` | Azure AI Search service endpoint. Required for Azure AI Search. |
 | `azure_search_api_key` | `SecretStr` | `AZURE_SEARCH_API_KEY` | Optional admin API key. |
-| `azure_search_index_prefix` | `str` | `AIQ_AZURE_SEARCH_INDEX_PREFIX` or `aiq` | Namespace prefix for AI-Q-owned indexes. |
+| `azure_search_index_prefix` | `str` | `AIQ_AZURE_SEARCH_INDEX_PREFIX` or `aiq` | Deployment-unique namespace for the shared AI-Q index. |
 | `embed_base_url` | `URL` | `AIQ_EMBED_BASE_URL` or NVIDIA API | OpenAI-compatible embedding base URL. |
 | `embed_model` | `str` | `AIQ_EMBED_MODEL` or `nvidia/llama-nemotron-embed-vl-1b-v2` | Embedding model used for Azure ingestion and retrieval. |
 | `embed_dim` | `int` | `AIQ_EMBED_DIM` or `2048` | Embedding dimensions; must match the model and existing index schema. |
-| `use_hybrid` | `bool` | `true` | Combine lexical and vector retrieval. |
-| `use_semantic_ranker` | `bool` | `false` | Apply Azure semantic ranking when supported; requires `use_hybrid: true`. |
-| `chunk_size` | `int` | `512` | Tokens per Azure-ingested chunk. |
-| `chunk_overlap` | `int` | `64` | Token overlap; must be smaller than `chunk_size`. |
-| `summary_max_chars` | `int` | `1000` | Maximum document characters sent to the summary model. |
 
 ### `intent_classifier`
 

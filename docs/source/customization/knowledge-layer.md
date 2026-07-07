@@ -43,7 +43,7 @@ A pluggable abstraction for document ingestion and retrieval. Swap backends with
 |---------|-------------|------|--------------|----------|
 | `llamaindex` | `"llamaindex"` | Local Library | ChromaDB | Dev, prototyping, macOS/Linux |
 | `foundational_rag` | `"foundational_rag"` | Hosted Service | Remote Milvus | Production, multi-user |
-| `azure_ai_search` | `"azure_ai_search"` | Managed Service | Azure AI Search | Hybrid and semantic retrieval |
+| `azure_ai_search` | `"azure_ai_search"` | Managed Service | Azure AI Search | Managed hybrid retrieval |
 
 **Local Library Mode** - Everything runs in your Python process. No external services needed.
 - **`llamaindex`** - LlamaIndex + ChromaDB. Lightweight, great for development. Works on macOS and Linux.
@@ -164,8 +164,6 @@ functions:
     _type: knowledge_retrieval
     backend: azure_ai_search
     collection_name: my_docs
-    use_hybrid: true
-    use_semantic_ranker: false
 ```
 
 Set `AZURE_SEARCH_ENDPOINT` and `NVIDIA_API_KEY` in the environment. Setting
@@ -174,19 +172,20 @@ Set `AZURE_SEARCH_ENDPOINT` and `NVIDIA_API_KEY` in the environment. Setting
 Contributor` for index management and `Search Index Data Contributor` for
 document ingestion and retrieval. Embedding defaults can be shared with the
 LlamaIndex backend through `AIQ_EMBED_BASE_URL` and `AIQ_EMBED_MODEL`; set
-`AIQ_EMBED_DIM` when changing the model dimensions.
+`AIQ_EMBED_DIM` when changing the model dimensions. Set a deployment-unique
+`AIQ_AZURE_SEARCH_INDEX_PREFIX` when multiple AI-Q deployments share a search
+service.
 
-Semantic ranking is disabled by default because support depends on the Azure AI
-Search service. Set `use_semantic_ranker: true` only when semantic ranking is
-enabled; it also requires `use_hybrid: true`.
+Azure stores all logical collections in one physical index selected by the
+prefix, schema version, embedding model, and dimension. Collection, file, and
+chunk manifests enforce logical isolation. Retrieval is always hybrid, and
+chunking is fixed at 1024 tokens with 128-token overlap. Schema-version-1
+indexes are ignored and require re-ingestion.
 
-Azure maps logical collection names to collision-safe physical indexes under `azure_search_index_prefix`. Only
-indexes containing an AI-Q ownership and schema marker are listed, queried, or deleted. Legacy indexes named directly
-after collections are ignored; re-ingest those collections after enabling this backend.
-
-Upload responses return canonical UUID file IDs. Re-uploading the same filename writes and verifies the new generation
-before removing the old generation. Collection cleanup uses `AIQ_COLLECTION_TTL_HOURS` (24 hours by default) and
-`AIQ_TTL_CLEANUP_INTERVAL_SECONDS` (one hour by default), matching the other knowledge backends.
+Upload responses return canonical UUID file IDs. Same-name uploads coexist as
+independent files. Collection cleanup uses `AIQ_COLLECTION_TTL_HOURS` (24 hours
+by default) and `AIQ_TTL_CLEANUP_INTERVAL_SECONDS` (one hour by default),
+matching the other knowledge backends.
 
 #### Multimodal Extraction (LlamaIndex Only)
 

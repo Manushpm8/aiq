@@ -20,9 +20,8 @@ from knowledge_layer.azure_ai_search.adapter import AzureAISearchIngestor
 from knowledge_layer.azure_ai_search.adapter import AzureAISearchRetriever
 from knowledge_layer.azure_ai_search.adapter import _build_index_schema
 from knowledge_layer.azure_ai_search.adapter import _coerce_page_number
-from knowledge_layer.azure_ai_search.adapter import _decode_marker
 from knowledge_layer.azure_ai_search.adapter import _encode_marker
-from knowledge_layer.azure_ai_search.adapter import _index_name_for_collection
+from knowledge_layer.azure_ai_search.adapter import _index_name_for_config
 from knowledge_layer.azure_ai_search.adapter import _iter_index_batches
 from knowledge_layer.azure_ai_search.adapter import _new_marker
 from knowledge_layer.azure_ai_search.adapter import _resolve_filenames
@@ -49,6 +48,15 @@ class FakeIndexingResult:
         self.error_message = error_message
 
 
+class FakeSearchResults(list):
+    def __init__(self, documents: list[dict], facets: dict | None = None):
+        super().__init__(documents)
+        self._facets = facets or {}
+
+    def get_facets(self):
+        return self._facets
+
+
 def _literal(filter_text: str | None, field: str, operator: str = "eq") -> str | None:
     if not filter_text:
         return None
@@ -62,8 +70,12 @@ class FakeSearchClient:
         self.upload_batches: list[list[dict]] = []
         self.delete_batches: list[list[dict]] = []
         self.search_filters: list[str | None] = []
+        self.search_requests: list[dict] = []
         self.fail_upload_ids: set[str] = set()
         self.delete_failures_remaining: dict[str, int] = {}
+        self.hidden_searches_remaining = 0
+        self.stale_deleted_searches_remaining = 0
+        self.deleted_documents: dict[str, dict] = {}
 
     def upload_documents(self, documents: list[dict]):
         self.upload_batches.append(documents)
@@ -86,28 +98,60 @@ class FakeSearchClient:
             if remaining > 0:
                 self.delete_failures_remaining[key] = remaining - 1
             if succeeded:
-                self.documents.pop(key, None)
+                deleted = self.documents.pop(key, None)
+                if deleted:
+                    self.deleted_documents[key] = deleted
             results.append(FakeIndexingResult(key, succeeded, None if succeeded else "retry"))
         return results
 
+    def get_document(self, key: str):
+        if key not in self.documents:
+            raise ResourceNotFoundError("missing")
+        return dict(self.documents[key])
+
     def search(self, search_text="*", filter=None, select=None, order_by=None, top=None, **kwargs):
-        del search_text, order_by, kwargs
+        del order_by
         self.search_filters.append(filter)
-        file_id = _literal(filter, "file_id")
-        file_name = _literal(filter, "file_name")
+        self.search_requests.append(
+            {"search_text": search_text, "filter": filter, "select": select, "top": top, **kwargs}
+        )
+        equals = {
+            field: _literal(filter, field)
+            for field in ("record_type", "collection_id", "file_id", "file_name", "status")
+        }
+        excluded_record_type = _literal(filter, "record_type", "ne")
         after_id = _literal(filter, "id", "gt")
-        documents = sorted(self.documents.values(), key=lambda item: item["id"])
-        if file_id is not None:
-            documents = [document for document in documents if document.get("file_id") == file_id]
-        if file_name is not None:
-            documents = [document for document in documents if document.get("file_name") == file_name]
+        documents = list(self.documents.values())
+        if self.stale_deleted_searches_remaining > 0 and self.deleted_documents:
+            documents.extend(self.deleted_documents.values())
+            self.stale_deleted_searches_remaining -= 1
+        if self.hidden_searches_remaining > 0:
+            documents = []
+            self.hidden_searches_remaining -= 1
+        documents = sorted(documents, key=lambda item: item["id"])
+        for field, value in equals.items():
+            if value is not None:
+                documents = [document for document in documents if document.get(field) == value]
+        if excluded_record_type is not None:
+            documents = [document for document in documents if document.get("record_type") != excluded_record_type]
         if after_id is not None:
             documents = [document for document in documents if document["id"] > after_id]
+        facet_documents = documents
         if top is not None:
             documents = documents[:top]
+        facets = {}
+        if "facets" in kwargs and any(str(value).startswith("record_type") for value in kwargs["facets"]):
+            counts: dict[str, int] = {}
+            for document in facet_documents:
+                record_type = document.get("record_type")
+                if record_type:
+                    counts[record_type] = counts.get(record_type, 0) + 1
+            facets["record_type"] = [{"value": value, "count": count} for value, count in counts.items()]
         if select:
-            return [{key: document.get(key) for key in select} for document in documents]
-        return [dict(document) for document in documents]
+            documents = [{key: document.get(key) for key in select} for document in documents]
+        else:
+            documents = [dict(document) for document in documents]
+        return FakeSearchResults(documents, facets)
 
     def get_document_count(self):
         return len(self.documents)
@@ -187,8 +231,6 @@ def _config(**overrides):
         "embed_model": "test-embed",
         "embed_dim": 4,
         "embed_base_url": "https://integrate.api.nvidia.com/v1",
-        "use_hybrid": True,
-        "use_semantic_ranker": True,
         "start_ttl_cleanup": False,
         "index_prefix": "aiq-test",
     }
@@ -200,8 +242,36 @@ def _ingestor(**overrides):
     ingestor = AzureAISearchIngestor(_config(**overrides))
     ingestor._index_client = FakeIndexClient()
     search_client = FakeSearchClient()
-    ingestor._get_search_client = lambda collection_name: search_client
+    ingestor._search_client = search_client
+    ingestor._index_validated = False
     return ingestor, search_client
+
+
+def _write_file_manifest(
+    ingestor,
+    file_id: str,
+    collection_name: str = "docs",
+    file_name: str = "report.pdf",
+    *,
+    status: FileStatus = FileStatus.SUCCESS,
+    chunk_count: int = 0,
+    summary: str | None = None,
+    ingested_at: datetime | None = None,
+):
+    info = azure_adapter.FileInfo(
+        file_id=file_id,
+        file_name=file_name,
+        collection_name=collection_name,
+        status=status,
+        error_message="bad file" if status == FileStatus.FAILED else None,
+        file_size=42,
+        chunk_count=chunk_count,
+        uploaded_at=datetime.now(UTC),
+        ingested_at=ingested_at or datetime.now(UTC),
+        metadata={"section": "finance"},
+    )
+    ingestor._write_file_manifest(info, summary=summary)
+    return info
 
 
 def _install_reader(monkeypatch):
@@ -222,7 +292,7 @@ def test_backend_registered_and_implements_sdk_contracts():
     assert issubclass(AzureAISearchRetriever, BaseRetriever)
 
 
-def test_config_requires_endpoint_and_valid_hybrid_semantic_combination(monkeypatch):
+def test_config_requires_endpoint_and_omits_removed_azure_options(monkeypatch):
     monkeypatch.delenv("AZURE_SEARCH_ENDPOINT", raising=False)
     monkeypatch.delenv("AZURE_SEARCH_API_KEY", raising=False)
 
@@ -233,14 +303,8 @@ def test_config_requires_endpoint_and_valid_hybrid_semantic_combination(monkeypa
         azure_search_endpoint="https://example.search.windows.net",
     )
     assert config.azure_search_api_key is None
-    assert not config.use_semantic_ranker
-    with pytest.raises(ValueError, match="use_semantic_ranker"):
-        KnowledgeRetrievalConfig(
-            backend="azure_ai_search",
-            azure_search_endpoint="https://example.search.windows.net",
-            use_hybrid=False,
-            use_semantic_ranker=True,
-        )
+    for field in ("chunk_size", "chunk_overlap", "use_hybrid", "use_semantic_ranker", "summary_max_chars"):
+        assert field not in KnowledgeRetrievalConfig.model_fields
 
 
 def test_config_uses_shared_environment_defaults(monkeypatch):
@@ -262,9 +326,20 @@ def test_config_uses_shared_environment_defaults(monkeypatch):
     assert backend_config["embed_base_url"] == "https://embed.example.com/v1"
     assert backend_config["embed_model"] == "env-embed"
     assert backend_config["embed_dim"] == 8
-    assert not backend_config["use_semantic_ranker"]
     assert adapter_config.endpoint == "https://env.search.windows.net"
-    assert not adapter_config.use_semantic_ranker
+
+
+def test_config_uses_defaults_for_empty_azure_environment_values(monkeypatch):
+    monkeypatch.setenv("AIQ_AZURE_SEARCH_INDEX_PREFIX", "")
+    monkeypatch.setenv("AIQ_EMBED_DIM", "")
+
+    config = KnowledgeRetrievalConfig(
+        backend="azure_ai_search",
+        azure_search_endpoint="https://example.search.windows.net",
+    )
+
+    assert config.azure_search_index_prefix == "aiq"
+    assert config.embed_dim == 2048
 
 
 def test_shared_embedding_defaults_match_adapter(monkeypatch):
@@ -313,33 +388,35 @@ def test_setup_backend_preserves_secrets_and_prefix(monkeypatch):
     assert backend_config["index_prefix"] == "tenant-aiq"
 
 
-def test_index_names_are_official_stable_and_collision_safe():
-    names = ["Tenant A", "tenant-a", "tenant/a", "TENANT+A"]
-    indexes = [_index_name_for_collection(name, "AIQ Prod") for name in names]
+def test_index_name_is_stable_and_changes_with_embedding_configuration():
+    index = _index_name_for_config("AIQ Prod", "test/embed", 2048)
 
-    assert len(set(indexes)) == len(names)
-    assert indexes[0] == _index_name_for_collection("Tenant A", "AIQ Prod")
-    assert all(len(index) <= 128 for index in indexes)
-    assert all(re.fullmatch(r"[a-z0-9-]+", index) for index in indexes)
-    _validate_index_name(indexes[0])
+    assert index == _index_name_for_config("AIQ Prod", "test/embed", 2048)
+    assert index != _index_name_for_config("AIQ Prod", "other/embed", 2048)
+    assert index != _index_name_for_config("AIQ Prod", "test/embed", 1024)
+    assert len(index) <= 128
+    assert re.fullmatch(r"[a-z0-9-]+", index)
+    _validate_index_name(index)
     with pytest.raises(ValueError, match="Invalid Azure AI Search index name"):
         _validate_index_name("invalid_name")
 
 
 def test_marker_and_schema_validation_reject_unowned_and_mismatched_indexes():
-    cfg = SimpleNamespace(embed_model="test-embed", embed_dim=4, use_semantic_ranker=True)
-    marker = _new_marker("docs", cfg, "Docs", {"tenant": "alpha"})
+    cfg = SimpleNamespace(embed_model="test-embed", embed_dim=4, index_prefix="aiq-test")
+    marker = _new_marker(cfg)
     index = _build_index_schema("aiq-docs-123456789abc", 4, _encode_marker(marker))
 
-    assert _validate_index_schema(index, "docs", cfg)["metadata"] == {"tenant": "alpha"}
+    assert _validate_index_schema(index, cfg)["schema_version"] == 2
+    assert "metadata" not in marker
+    assert "collection" not in marker
     index.description = "unmanaged"
     with pytest.raises(RuntimeError, match="not owned"):
-        _validate_index_schema(index, "docs", cfg)
+        _validate_index_schema(index, cfg)
     index.description = _encode_marker(marker)
     embedding = next(field for field in index.fields if field.name == "embedding")
     embedding.vector_search_dimensions = 8
     with pytest.raises(RuntimeError, match="vector profile or dimensions"):
-        _validate_index_schema(index, "docs", cfg)
+        _validate_index_schema(index, cfg)
 
 
 def test_create_collection_handles_race_and_ignores_unmanaged_indexes():
@@ -353,6 +430,45 @@ def test_create_collection_handles_race_and_ignores_unmanaged_indexes():
     assert [collection.name for collection in ingestor.list_collections()] == ["docs"]
 
 
+def test_multiple_collections_share_one_physical_index_and_keep_marker_bounded():
+    ingestor, _client = _ingestor()
+    large_value = "x" * 10_000
+
+    ingestor.create_collection("docs", description=large_value, metadata={"large": large_value})
+    ingestor.create_collection("private")
+
+    assert len(ingestor._index_client.indexes) == 1
+    index = ingestor._index_client.indexes[ingestor._physical_index_name()]
+    assert len(index.description) < 4_000
+    assert large_value not in index.description
+    assert {item.name for item in ingestor.list_collections()} == {"docs", "private"}
+
+
+def test_create_waits_for_collection_manifest_search_visibility(monkeypatch):
+    ingestor, client = _ingestor()
+    client.hidden_searches_remaining = 2
+    monkeypatch.setattr(azure_adapter, "_CONSISTENCY_DELAY_SECONDS", 0)
+
+    ingestor.create_collection("docs")
+
+    assert client.hidden_searches_remaining == 0
+    assert [item.name for item in ingestor.list_collections()] == ["docs"]
+
+
+def test_legacy_and_foreign_indexes_are_ignored():
+    ingestor, _client = _ingestor()
+    legacy_marker = _new_marker(ingestor.cfg)
+    legacy_marker["schema_version"] = 1
+    ingestor._index_client.indexes["aiq-test-docs-v1"] = _build_index_schema(
+        "aiq-test-docs-v1",
+        ingestor.cfg.embed_dim,
+        _encode_marker(legacy_marker),
+    )
+    ingestor._index_client.indexes["foreign"] = SearchIndex(name="foreign", fields=[], description="foreign")
+
+    assert ingestor.list_collections() == []
+
+
 def test_create_collection_propagates_real_create_failure():
     ingestor, _client = _ingestor()
     ingestor._index_client.fail_create = True
@@ -364,13 +480,13 @@ def test_create_collection_propagates_real_create_failure():
 @pytest.mark.parametrize(
     ("hit", "expected"),
     [
-        ({"@search.reranker_score": 2.0, "@search.score": 0.9}, 0.5),
-        ({"@search.reranker_score": 8.0}, 1.0),
-        ({"@search.reranker_score": -1.0}, 0.0),
+        ({"@search.reranker_score": 2.0, "@search.score": 0.9}, 0.9),
+        ({"@search.score": 8.0}, 1.0),
+        ({"@search.score": -1.0}, 0.0),
         ({"@search.score": 0.75}, 0.75),
     ],
 )
-def test_normalize_clamps_and_prefers_reranker_score(hit, expected):
+def test_normalize_clamps_search_score(hit, expected):
     chunk = AzureAISearchRetriever.__new__(AzureAISearchRetriever).normalize(
         {"id": "chunk-1", "chunk": "text", "file_name": "report.pdf", **hit}
     )
@@ -410,7 +526,7 @@ def test_shared_formatter_retains_source_and_citation_lines():
 
 
 @pytest.mark.asyncio
-async def test_retrieve_builds_hybrid_semantic_search_request():
+async def test_retrieve_builds_scoped_hybrid_search_request():
     class FakeClient:
         def search(self, **kwargs):
             self.kwargs = kwargs
@@ -418,7 +534,6 @@ async def test_retrieve_builds_hybrid_semantic_search_request():
 
     client = FakeClient()
     retriever = AzureAISearchRetriever.__new__(AzureAISearchRetriever)
-    retriever.cfg = SimpleNamespace(use_hybrid=True, use_semantic_ranker=True)
     retriever._embedding = FakeEmbedding(2)
     retriever._get_client = lambda collection_name: client
 
@@ -426,7 +541,10 @@ async def test_retrieve_builds_hybrid_semantic_search_request():
 
     assert result.success
     assert client.kwargs["search_text"] == "hello"
-    assert client.kwargs["query_type"] == "semantic"
+    assert len(client.kwargs["vector_queries"]) == 1
+    assert "record_type eq 'chunk'" in client.kwargs["filter"]
+    assert "collection_id eq 'session-1'" in client.kwargs["filter"]
+    assert "query_type" not in client.kwargs
     assert client.kwargs["select"] == ["id", "chunk", "file_id", "file_name", "page_number", "metadata"]
 
 
@@ -454,12 +572,17 @@ def test_submit_job_uses_one_canonical_file_id(monkeypatch, tmp_path):
     path.write_text("content", encoding="utf-8")
     ingestor, _client = _ingestor()
 
-    job_id = ingestor.submit_job([str(path)], "docs", {"original_filenames": ["original.txt"]})
+    job_id = ingestor.submit_job(
+        [str(path)],
+        "docs",
+        {"original_filenames": ["original.txt"], "metadata": {"large": "x" * 10_000}},
+    )
     job = ingestor.get_job_status(job_id)
     file_id = job.file_details[0].file_id
 
     assert file_id in ingestor._files
     assert ingestor._files[file_id].file_name == "original.txt"
+    assert ingestor.get_file_status(file_id, "docs").metadata["large"] == "x" * 10_000
 
 
 def test_upload_file_preserves_caller_owned_source_by_default(monkeypatch, tmp_path):
@@ -483,6 +606,37 @@ def test_upload_file_preserves_caller_owned_source_by_default(monkeypatch, tmp_p
     ingestor.upload_file(str(path), "docs")
 
     assert path.exists()
+
+
+def test_post_upload_failure_rolls_back_chunks_and_retains_failed_manifest(monkeypatch, tmp_path):
+    class SynchronousThread:
+        def __init__(self, *, target, args, **kwargs):
+            del kwargs
+            self.target = target
+            self.args = args
+
+        def start(self):
+            self.target(*self.args)
+
+    _install_reader(monkeypatch)
+    monkeypatch.setattr(azure_adapter.threading, "Thread", SynchronousThread)
+    path = tmp_path / "document.txt"
+    path.write_text("content", encoding="utf-8")
+    ingestor, client = _ingestor()
+    ingestor._embedding = FakeEmbedding()
+    ingestor._splitter = FakeSplitter([FakeNode("content")])
+
+    def fail_timestamp(collection):
+        del collection
+        raise RuntimeError("fail")
+
+    monkeypatch.setattr(ingestor, "_update_collection_timestamp", fail_timestamp)
+
+    uploaded = ingestor.upload_file(str(path), "docs")
+    status = ingestor.get_file_status(uploaded.file_id, "docs")
+
+    assert status.status == FileStatus.FAILED
+    assert not [document for document in client.documents.values() if document.get("record_type") == "chunk"]
 
 
 def test_batches_respect_action_count_and_payload_size():
@@ -535,15 +689,7 @@ def test_pagination_is_exhaustive_and_file_ids_are_odata_escaped(monkeypatch):
     ingestor, client = _ingestor()
     ingestor.create_collection("docs")
     for index in range(5):
-        client.documents[f"chunk-{index}"] = {
-            "id": f"chunk-{index}",
-            "file_id": f"file-{index}",
-            "file_name": f"file-{index}.txt",
-            "file_size": index,
-            "uploaded_at": datetime.now(UTC),
-            "ingested_at": datetime.now(UTC),
-            "metadata": "{}",
-        }
+        _write_file_manifest(ingestor, f"file-{index}", file_name=f"file-{index}.txt")
 
     assert len(ingestor.list_files("docs")) == 5
     crafted = "x' or file_id ne ''"
@@ -551,14 +697,8 @@ def test_pagination_is_exhaustive_and_file_ids_are_odata_escaped(monkeypatch):
     assert any("file_id eq 'x'' or file_id ne '''''" in (item or "") for item in client.search_filters)
 
 
-def test_same_name_replacement_removes_old_generation(monkeypatch, tmp_path):
+def test_same_name_upload_keeps_existing_file_chunks(monkeypatch, tmp_path):
     _install_reader(monkeypatch)
-    cleared = []
-    monkeypatch.setattr(
-        azure_adapter,
-        "unregister_summary",
-        lambda collection, file_name: cleared.append((collection, file_name)),
-    )
     path = tmp_path / "document.txt"
     path.write_text("new content", encoding="utf-8")
     ingestor, client = _ingestor()
@@ -567,6 +707,8 @@ def test_same_name_replacement_removes_old_generation(monkeypatch, tmp_path):
     ingestor._splitter = FakeSplitter([FakeNode("new")])
     client.documents["old-00000000"] = {
         "id": "old-00000000",
+        "record_type": "chunk",
+        "collection_id": "docs",
         "chunk": "old",
         "embedding": [0.1] * 4,
         "file_id": "old",
@@ -579,7 +721,7 @@ def test_same_name_replacement_removes_old_generation(monkeypatch, tmp_path):
         "metadata": "{}",
     }
 
-    count = ingestor._process_file(
+    count, summary, _ingested_at = ingestor._process_file(
         path=str(path),
         collection_name="docs",
         file_id="new",
@@ -590,12 +732,15 @@ def test_same_name_replacement_removes_old_generation(monkeypatch, tmp_path):
     )
 
     assert count == 1
-    assert set(client.documents) == {"new-00000000"}
-    assert client.documents["new-00000000"]["metadata"] == '{"tenant":"alpha"}'
-    assert cleared == []
+    assert summary is None
+    assert {document["id"] for document in client.documents.values() if document.get("record_type") == "chunk"} == {
+        "old-00000000",
+        "chunk-new-00000000",
+    }
+    assert client.documents["chunk-new-00000000"]["metadata"] == '{"tenant":"alpha"}'
 
 
-def test_failed_new_generation_preserves_old_generation(monkeypatch, tmp_path):
+def test_failed_upload_rolls_back_new_chunks_and_preserves_existing_duplicate(monkeypatch, tmp_path):
     _install_reader(monkeypatch)
     path = tmp_path / "document.txt"
     path.write_text("new content", encoding="utf-8")
@@ -605,10 +750,12 @@ def test_failed_new_generation_preserves_old_generation(monkeypatch, tmp_path):
     ingestor._splitter = FakeSplitter([FakeNode("first"), FakeNode("second")])
     client.documents["old-00000000"] = {
         "id": "old-00000000",
+        "record_type": "chunk",
+        "collection_id": "docs",
         "file_id": "old",
         "file_name": "document.txt",
     }
-    client.fail_upload_ids.add("new-00000001")
+    client.fail_upload_ids.add("chunk-new-00000001")
 
     with pytest.raises(RuntimeError, match="rejected upload"):
         ingestor._process_file(
@@ -621,51 +768,33 @@ def test_failed_new_generation_preserves_old_generation(monkeypatch, tmp_path):
             metadata={},
         )
 
-    assert set(client.documents) == {"old-00000000"}
+    chunk_ids = {document["id"] for document in client.documents.values() if document.get("record_type") == "chunk"}
+    assert chunk_ids == {"old-00000000"}
 
 
-def test_replacement_cleanup_failure_retains_complete_new_generation(monkeypatch, tmp_path):
-    _install_reader(monkeypatch)
-    path = tmp_path / "document.txt"
-    path.write_text("new content", encoding="utf-8")
-    ingestor, client = _ingestor()
+def test_duplicate_file_manifests_are_independent():
+    ingestor, _client = _ingestor()
     ingestor.create_collection("docs")
-    ingestor._embedding = FakeEmbedding()
-    ingestor._splitter = FakeSplitter([FakeNode("new")])
-    client.documents["old-00000000"] = {
-        "id": "old-00000000",
-        "file_id": "old",
-        "file_name": "document.txt",
-    }
-    client.delete_failures_remaining["old-00000000"] = 10
+    _write_file_manifest(ingestor, "old", file_name="document.txt")
+    _write_file_manifest(ingestor, "new", file_name="document.txt")
 
-    with pytest.raises(RuntimeError, match="rejected delete"):
-        ingestor._process_file(
-            path=str(path),
-            collection_name="docs",
-            file_id="new",
-            file_name="document.txt",
-            file_size=11,
-            uploaded_at=datetime.now(UTC),
-            metadata={},
-        )
-
-    assert set(client.documents) == {"old-00000000", "new-00000000"}
+    assert [(item.file_id, item.file_name) for item in ingestor.list_files("docs")] == [
+        ("new", "document.txt"),
+        ("old", "document.txt"),
+    ]
 
 
 def test_metadata_counts_and_status_round_trip():
     ingestor, client = _ingestor()
     ingestor.create_collection("docs", metadata={"tenant": "alpha"})
-    now = datetime.now(UTC)
+    _write_file_manifest(ingestor, "file-1", chunk_count=3)
     for index in range(3):
-        client.documents[f"file-1-{index:08d}"] = {
-            "id": f"file-1-{index:08d}",
+        client.documents[f"chunk-file-1-{index:08d}"] = {
+            "id": f"chunk-file-1-{index:08d}",
+            "record_type": "chunk",
+            "collection_id": "docs",
             "file_id": "file-1",
             "file_name": "report.pdf",
-            "file_size": 42,
-            "uploaded_at": now,
-            "ingested_at": now,
-            "metadata": '{"section":"finance"}',
         }
 
     files = ingestor.list_files("docs")
@@ -678,18 +807,50 @@ def test_metadata_counts_and_status_round_trip():
     assert collection.file_count == 1
     assert collection.chunk_count == 3
     assert collection.metadata["tenant"] == "alpha"
+    facet_request = next(request for request in client.search_requests if request.get("facets"))
+    assert facet_request["top"] == 0
+    assert facet_request["facets"] == ["record_type,count:0"]
+
+
+def test_file_status_and_deletion_do_not_cross_collection_boundaries():
+    ingestor, client = _ingestor()
+    ingestor.create_collection("docs")
+    ingestor.create_collection("private")
+    _write_file_manifest(ingestor, "shared-id", "docs")
+    _write_file_manifest(ingestor, "shared-id", "private")
+    for collection_name in ("docs", "private"):
+        key = f"chunk-{collection_name}"
+        client.documents[key] = {
+            "id": key,
+            "record_type": "chunk",
+            "collection_id": collection_name,
+            "file_id": "shared-id",
+        }
+
+    assert ingestor.delete_file("shared-id", "docs")
+    assert ingestor.get_file_status("shared-id", "docs") is None
+    assert ingestor.get_file_status("shared-id", "private") is not None
+    assert "chunk-docs" not in client.documents
+    assert "chunk-private" in client.documents
+
+
+def test_delete_waits_for_stale_file_manifest_to_disappear(monkeypatch):
+    ingestor, client = _ingestor()
+    ingestor.create_collection("docs")
+    _write_file_manifest(ingestor, "file-1")
+    client.stale_deleted_searches_remaining = 2
+    monkeypatch.setattr(azure_adapter, "_CONSISTENCY_DELAY_SECONDS", 0)
+
+    assert ingestor.delete_file("file-1", "docs")
+    assert client.stale_deleted_searches_remaining == 0
+    client.stale_deleted_searches_remaining = 1
+    assert ingestor.list_files("docs") == []
 
 
 def test_failed_uploads_remain_visible():
     ingestor, _client = _ingestor()
     ingestor.create_collection("docs")
-    ingestor._files["failed"] = azure_adapter.FileInfo(
-        file_id="failed",
-        file_name="failed.txt",
-        collection_name="docs",
-        status=FileStatus.FAILED,
-        error_message="bad file",
-    )
+    _write_file_manifest(ingestor, "failed", file_name="failed.txt", status=FileStatus.FAILED)
 
     files = ingestor.list_files("docs")
 
@@ -697,17 +858,11 @@ def test_failed_uploads_remain_visible():
 
 
 def test_ttl_deletes_only_expired_owned_collection_and_clears_summary(monkeypatch):
-    ingestor, _client = _ingestor(generate_summary=True)
+    ingestor, client = _ingestor(generate_summary=True)
     ingestor.create_collection("old")
     ingestor.create_collection("new")
-    old_name = ingestor._physical_index_name("old")
-    new_name = ingestor._physical_index_name("new")
-    old_marker = _decode_marker(ingestor._index_client.indexes[old_name].description)
-    new_marker = _decode_marker(ingestor._index_client.indexes[new_name].description)
-    old_marker["updated_at"] = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
-    new_marker["updated_at"] = datetime.now(UTC).isoformat()
-    ingestor._index_client.indexes[old_name].description = _encode_marker(old_marker)
-    ingestor._index_client.indexes[new_name].description = _encode_marker(new_marker)
+    old_manifest = next(document for document in client.documents.values() if document.get("collection_id") == "old")
+    old_manifest["updated_at"] = datetime.now(UTC) - timedelta(hours=25)
     ingestor._index_client.indexes["unrelated"] = SearchIndex(name="unrelated", fields=[], description="other")
     cleared = []
     monkeypatch.setattr(azure_adapter, "clear_collection_summaries", cleared.append)
@@ -715,8 +870,9 @@ def test_ttl_deletes_only_expired_owned_collection_and_clears_summary(monkeypatc
 
     ingestor._cleanup_expired_collections()
 
-    assert old_name not in ingestor._index_client.indexes
-    assert new_name in ingestor._index_client.indexes
+    assert ingestor.get_collection("old") is None
+    assert ingestor.get_collection("new") is not None
+    assert ingestor._physical_index_name() in ingestor._index_client.indexes
     assert "unrelated" in ingestor._index_client.indexes
     assert cleared == ["old"]
 
@@ -736,16 +892,15 @@ def test_collection_summary_clears_only_after_confirmed_delete(monkeypatch):
 def test_file_summary_clears_only_after_confirmed_delete(monkeypatch):
     ingestor, client = _ingestor(generate_summary=True)
     ingestor.create_collection("docs")
-    client.documents["file-1-00000000"] = {
-        "id": "file-1-00000000",
+    _write_file_manifest(ingestor, "file-1", summary="Summary")
+    client.documents["chunk-file-1-00000000"] = {
+        "id": "chunk-file-1-00000000",
+        "record_type": "chunk",
+        "collection_id": "docs",
         "file_id": "file-1",
         "file_name": "report.pdf",
-        "file_size": 1,
-        "uploaded_at": datetime.now(UTC),
-        "ingested_at": datetime.now(UTC),
-        "metadata": "{}",
     }
-    client.delete_failures_remaining["file-1-00000000"] = 10
+    client.delete_failures_remaining["chunk-file-1-00000000"] = 10
     cleared = []
     monkeypatch.setattr(azure_adapter, "unregister_summary", lambda collection, file_name: cleared.append(file_name))
 
@@ -756,17 +911,9 @@ def test_file_summary_clears_only_after_confirmed_delete(monkeypatch):
 
 
 def test_summary_cleanup_is_skipped_when_summaries_are_disabled(monkeypatch):
-    ingestor, client = _ingestor()
+    ingestor, _client = _ingestor()
     ingestor.create_collection("docs")
-    client.documents["file-1-00000000"] = {
-        "id": "file-1-00000000",
-        "file_id": "file-1",
-        "file_name": "report.pdf",
-        "file_size": 1,
-        "uploaded_at": datetime.now(UTC),
-        "ingested_at": datetime.now(UTC),
-        "metadata": "{}",
-    }
+    _write_file_manifest(ingestor, "file-1")
     cleared = []
     monkeypatch.setattr(
         azure_adapter,
@@ -778,6 +925,40 @@ def test_summary_cleanup_is_skipped_when_summaries_are_disabled(monkeypatch):
     assert ingestor.delete_file("file-1", "docs")
     assert ingestor.delete_collection("docs")
     assert cleared == []
+
+
+def test_deleting_newest_duplicate_restores_previous_summary(monkeypatch):
+    ingestor, _client = _ingestor(generate_summary=True)
+    ingestor.create_collection("docs")
+    now = datetime.now(UTC)
+    _write_file_manifest(
+        ingestor,
+        "older",
+        file_name="report.pdf",
+        summary="Older summary",
+        ingested_at=now - timedelta(minutes=1),
+    )
+    _write_file_manifest(ingestor, "newer", file_name="report.pdf", summary="Newer summary", ingested_at=now)
+    registered = []
+    monkeypatch.setattr(
+        azure_adapter,
+        "register_summary",
+        lambda collection, file_name, summary: registered.append((collection, file_name, summary)),
+    )
+
+    assert ingestor.delete_file("newer", "docs")
+    assert registered == [("docs", "report.pdf", "Older summary")]
+
+
+def test_active_file_and_collection_deletion_are_rejected():
+    ingestor, _client = _ingestor()
+    ingestor.create_collection("docs")
+    _write_file_manifest(ingestor, "active", status=FileStatus.INGESTING)
+
+    with pytest.raises(ValueError, match="while it is ingesting"):
+        ingestor.delete_file("active", "docs")
+    with pytest.raises(ValueError, match="while files are ingesting"):
+        ingestor.delete_collection("docs")
 
 
 @pytest.mark.asyncio
@@ -802,7 +983,16 @@ def test_index_schema_uses_requested_dimensions_and_fields():
     assert fields["embedding"].vector_search_dimensions == 4096
     assert fields["file_id"].filterable
     assert fields["id"].sortable
-    assert schema.semantic_search.default_configuration_name == "default-semantic"
+    assert fields["record_type"].facetable
+    assert fields["collection_id"].filterable
+    assert schema.semantic_search is None
+
+
+def test_splitter_uses_fixed_chunking_configuration():
+    ingestor, _client = _ingestor()
+
+    assert ingestor.splitter.chunk_size == 1024
+    assert ingestor.splitter.chunk_overlap == 128
 
 
 def test_filename_page_normalization_and_error_translation(tmp_path):
