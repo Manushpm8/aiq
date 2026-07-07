@@ -284,10 +284,6 @@ class KnowledgeRetrievalConfig(FunctionBaseConfig, name="knowledge_retrieval"):
         gt=0,
         description="Embedding dimensions; defaults to AIQ_EMBED_DIM and must match existing indexes",
     )
-    embed_api_key: SecretStr | None = Field(
-        default=None,
-        description="Optional embedding API key; NVIDIA_API_KEY is used when omitted",
-    )
     use_hybrid: bool = Field(default=True, description="Combine vector and keyword search (azure_ai_search only)")
     use_semantic_ranker: bool = Field(
         default=False,
@@ -456,7 +452,6 @@ def _setup_backend(config: KnowledgeRetrievalConfig, summary_llm_obj=None) -> tu
             "embed_base_url": str(config.embed_base_url),
             "embed_model": config.embed_model,
             "embed_dim": config.embed_dim,
-            "embed_api_key": config.embed_api_key,
             "use_hybrid": config.use_hybrid,
             "use_semantic_ranker": config.use_semantic_ranker,
             "chunk_size": config.chunk_size,

@@ -296,8 +296,7 @@ def test_setup_backend_preserves_secrets_and_prefix(monkeypatch):
         backend="azure_ai_search",
         azure_search_endpoint="https://example.search.windows.net",
         azure_search_auth_mode="api_key",
-        azure_search_api_key="test-search-key",
-        embed_api_key="test-embed-key",
+        azure_search_api_key="test-search-key", # pragma: allowlist secret
         azure_search_index_prefix="tenant-aiq",
     )
 
@@ -305,7 +304,6 @@ def test_setup_backend_preserves_secrets_and_prefix(monkeypatch):
 
     assert backend == "azure_ai_search"
     assert isinstance(backend_config["api_key"], SecretStr)
-    assert isinstance(backend_config["embed_api_key"], SecretStr)
     assert backend_config["index_prefix"] == "tenant-aiq"
 
 

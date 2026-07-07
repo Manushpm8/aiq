@@ -86,7 +86,6 @@ def _coerce_config(config: dict[str, Any] | None) -> SimpleNamespace:
         "embed_base_url": os.environ.get("AIQ_EMBED_BASE_URL", "https://integrate.api.nvidia.com/v1"),
         "embed_model": os.environ.get("AIQ_EMBED_MODEL", "nvidia/llama-nemotron-embed-vl-1b-v2"),
         "embed_dim": int(os.environ.get("AIQ_EMBED_DIM", "2048")),
-        "embed_api_key": None,
         "use_hybrid": True,
         "use_semantic_ranker": False,
         "chunk_size": 512,
@@ -419,7 +418,6 @@ class _AzureIndexMixin:
             self._embedding = NVIDIAEmbedding(
                 model=self.cfg.embed_model,
                 base_url=str(self.cfg.embed_base_url),
-                api_key=_secret_value(self.cfg.embed_api_key),
             )
         return self._embedding
 
