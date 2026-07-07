@@ -279,16 +279,8 @@ class KnowledgeRetrievalConfig(FunctionBaseConfig, name="knowledge_retrieval"):
         min_length=1,
         description="Prefix for AI-Q-owned indexes; defaults to AIQ_AZURE_SEARCH_INDEX_PREFIX or aiq",
     )
-    embed_base_url: HttpUrl = Field(
-        default_factory=lambda: _url_from_env("AIQ_EMBED_BASE_URL", "https://integrate.api.nvidia.com/v1"),
-        description="Embedding base URL; defaults to AIQ_EMBED_BASE_URL",
-    )
-    embed_model: str = Field(
-        default_factory=lambda: os.environ.get("AIQ_EMBED_MODEL", "nvidia/nv-embed-v1"),
-        description="Embedding model; defaults to AIQ_EMBED_MODEL",
-    )
     embed_dim: int = Field(
-        default_factory=lambda: int(os.environ.get("AIQ_EMBED_DIM", "4096")),
+        default_factory=lambda: int(os.environ.get("AIQ_EMBED_DIM", "2048")),
         gt=0,
         description="Embedding dimensions; defaults to AIQ_EMBED_DIM and must match existing indexes",
     )
@@ -450,6 +442,8 @@ def _setup_backend(config: KnowledgeRetrievalConfig, summary_llm_obj=None) -> tu
             "dask_file_transfer": config.opensearch_dask_file_transfer,
             "embed_model": config.embed_model,
             "embed_base_url": config.embed_base_url,
+            **summary_config,
+        }
 
     elif backend == "azure_ai_search":
         import knowledge_layer.azure_ai_search.adapter  # noqa: F401
@@ -474,7 +468,9 @@ def _setup_backend(config: KnowledgeRetrievalConfig, summary_llm_obj=None) -> tu
         }
 
     else:
-        raise ValueError(f"Unknown backend: {backend}. Use 'llamaindex', 'foundational_rag', 'opensearch', or 'azure_ai_search'.")
+        raise ValueError(
+            f"Unknown backend: {backend}. Use 'llamaindex', 'foundational_rag', 'opensearch', or 'azure_ai_search'."
+        )
 
     os.environ["KNOWLEDGE_RETRIEVER_BACKEND"] = backend
     os.environ["KNOWLEDGE_INGESTOR_BACKEND"] = backend

@@ -264,6 +264,22 @@ def test_config_uses_shared_environment_defaults(monkeypatch):
     assert not adapter_config.use_semantic_ranker
 
 
+def test_shared_embedding_defaults_match_adapter(monkeypatch):
+    monkeypatch.delenv("AIQ_EMBED_MODEL", raising=False)
+    monkeypatch.delenv("AIQ_EMBED_DIM", raising=False)
+
+    config = KnowledgeRetrievalConfig(
+        backend="azure_ai_search",
+        azure_search_endpoint="https://example.search.windows.net",
+    )
+    adapter_config = azure_adapter._coerce_config({"endpoint": "https://example.search.windows.net"})
+
+    assert config.embed_model == "nvidia/llama-nemotron-embed-vl-1b-v2"
+    assert config.embed_dim == 2048
+    assert adapter_config.embed_model == config.embed_model
+    assert adapter_config.embed_dim == config.embed_dim
+
+
 def test_api_key_auth_requires_secret():
     with pytest.raises(ValueError, match="azure_search_api_key"):
         KnowledgeRetrievalConfig(

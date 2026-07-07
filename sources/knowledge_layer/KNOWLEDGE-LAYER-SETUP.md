@@ -1048,7 +1048,7 @@ Configuration values are resolved in the following order (highest to lowest prio
 | `AIQ_AZURE_SEARCH_INDEX_PREFIX` | azure_ai_search | Prefix for AI-Q-owned indexes (default: `aiq`) |
 | `AIQ_EMBED_MODEL` | llamaindex, azure_ai_search | Embedding model name |
 | `AIQ_EMBED_BASE_URL` | llamaindex, azure_ai_search | Embedding API base URL |
-| `AIQ_EMBED_DIM` | azure_ai_search | Embedding dimensions (default: `4096`) |
+| `AIQ_EMBED_DIM` | azure_ai_search | Embedding dimensions (default: `2048`) |
 | `AIQ_SUMMARY_DB` | All | Summary database URL (SQLite or PostgreSQL) |
 | `RAG_SERVER_URL` | foundational_rag | Query server URL (port 8081) |
 | `RAG_INGEST_URL` | foundational_rag | Ingestion server URL (port 8082) |
