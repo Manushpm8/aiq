@@ -270,9 +270,9 @@ class KnowledgeRetrievalConfig(FunctionBaseConfig, name="knowledge_retrieval"):
         default_factory=lambda: _secret_from_env("AZURE_SEARCH_API_KEY"),
         description="Optional Azure AI Search admin key; defaults to AZURE_SEARCH_API_KEY",
     )
-    azure_search_auth_mode: Literal["managed_identity", "api_key"] = Field(
-        default_factory=lambda: "api_key" if os.environ.get("AZURE_SEARCH_API_KEY") else "managed_identity",
-        description="Authentication mode; defaults to API key when AZURE_SEARCH_API_KEY is set",
+    azure_search_auth_mode: Literal["managed_identity", "api_key"] | None = Field(
+        default=None,
+        description="Authentication mode; derived from azure_search_api_key when omitted",
     )
     azure_search_index_prefix: str = Field(
         default_factory=lambda: os.environ.get("AIQ_AZURE_SEARCH_INDEX_PREFIX", "aiq"),
@@ -349,6 +349,8 @@ class KnowledgeRetrievalConfig(FunctionBaseConfig, name="knowledge_retrieval"):
         elif backend == "azure_ai_search":
             if self.azure_search_endpoint is None:
                 raise ValueError("azure_ai_search requires azure_search_endpoint")
+            if self.azure_search_auth_mode is None:
+                self.azure_search_auth_mode = "api_key" if self.azure_search_api_key is not None else "managed_identity"
             if self.azure_search_auth_mode == "api_key" and self.azure_search_api_key is None:
                 raise ValueError("azure_search_auth_mode=api_key requires azure_search_api_key")
             if self.chunk_overlap >= self.chunk_size:

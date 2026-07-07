@@ -231,6 +231,7 @@ def test_config_requires_endpoint_and_valid_hybrid_semantic_combination(monkeypa
         backend="azure_ai_search",
         azure_search_endpoint="https://example.search.windows.net",
     )
+    assert config.azure_search_auth_mode == "managed_identity"
     assert not config.use_semantic_ranker
     with pytest.raises(ValueError, match="use_semantic_ranker"):
         KnowledgeRetrievalConfig(
@@ -303,7 +304,6 @@ def test_setup_backend_preserves_secrets_and_prefix(monkeypatch):
     config = KnowledgeRetrievalConfig(
         backend="azure_ai_search",
         azure_search_endpoint="https://example.search.windows.net",
-        azure_search_auth_mode="api_key",
         azure_search_api_key="test-search-key",  # pragma: allowlist secret
         azure_search_index_prefix="tenant-aiq",
     )
@@ -311,6 +311,8 @@ def test_setup_backend_preserves_secrets_and_prefix(monkeypatch):
     backend, backend_config = _setup_backend(config)
 
     assert backend == "azure_ai_search"
+    assert config.azure_search_auth_mode == "api_key"
+    assert backend_config["auth_mode"] == "api_key"
     assert isinstance(backend_config["api_key"], SecretStr)
     assert backend_config["index_prefix"] == "tenant-aiq"
 
