@@ -277,7 +277,6 @@ environment. `AZURE_SEARCH_API_KEY` is optional; when absent, the adapter uses
 | `timeout` | `int` | `120` | Request timeout in seconds. Foundational RAG backend only. |
 | `verify_ssl` | `bool` | `true` | Verify SSL certificates. Set `false` for self-signed certs. Foundational RAG backend only. |
 | `azure_search_endpoint` | `URL` | `AZURE_SEARCH_ENDPOINT` | Azure AI Search service endpoint. Required for Azure AI Search. |
-| `azure_search_auth_mode` | `str` | Auto | Uses `api_key` when `AZURE_SEARCH_API_KEY` is set; otherwise `managed_identity`. |
 | `azure_search_api_key` | `SecretStr` | `AZURE_SEARCH_API_KEY` | Optional admin API key. |
 | `azure_search_index_prefix` | `str` | `AIQ_AZURE_SEARCH_INDEX_PREFIX` or `aiq` | Namespace prefix for AI-Q-owned indexes. |
 | `embed_base_url` | `URL` | `AIQ_EMBED_BASE_URL` or NVIDIA API | OpenAI-compatible embedding base URL. |

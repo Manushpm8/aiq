@@ -10,8 +10,10 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import ResourceNotFoundError
 from azure.core.exceptions import ServiceRequestError
+from azure.identity import DefaultAzureCredential
 from azure.search.documents.indexes.models import SearchIndex
 from knowledge_layer.azure_ai_search import adapter as azure_adapter
 from knowledge_layer.azure_ai_search.adapter import AzureAISearchIngestor
@@ -181,7 +183,6 @@ class FakeSplitter:
 def _config(**overrides):
     config = {
         "endpoint": "https://example.search.windows.net",
-        "auth_mode": "api_key",
         "api_key": SecretStr("test-key"),
         "embed_model": "test-embed",
         "embed_dim": 4,
@@ -231,7 +232,7 @@ def test_config_requires_endpoint_and_valid_hybrid_semantic_combination(monkeypa
         backend="azure_ai_search",
         azure_search_endpoint="https://example.search.windows.net",
     )
-    assert config.azure_search_auth_mode == "managed_identity"
+    assert config.azure_search_api_key is None
     assert not config.use_semantic_ranker
     with pytest.raises(ValueError, match="use_semantic_ranker"):
         KnowledgeRetrievalConfig(
@@ -256,7 +257,6 @@ def test_config_uses_shared_environment_defaults(monkeypatch):
 
     assert backend == "azure_ai_search"
     assert backend_config["endpoint"] == "https://env.search.windows.net/"
-    assert backend_config["auth_mode"] == "api_key"
     assert backend_config["api_key"].get_secret_value() == "env-search-key"
     assert backend_config["index_prefix"] == "env-aiq"
     assert backend_config["embed_base_url"] == "https://embed.example.com/v1"
@@ -264,7 +264,6 @@ def test_config_uses_shared_environment_defaults(monkeypatch):
     assert backend_config["embed_dim"] == 8
     assert not backend_config["use_semantic_ranker"]
     assert adapter_config.endpoint == "https://env.search.windows.net"
-    assert adapter_config.auth_mode == "api_key"
     assert not adapter_config.use_semantic_ranker
 
 
@@ -287,15 +286,14 @@ def test_shared_embedding_defaults_match_adapter(monkeypatch):
     assert adapter_config.embed_dim == config.embed_dim
 
 
-def test_api_key_auth_requires_secret(monkeypatch):
-    monkeypatch.delenv("AZURE_SEARCH_API_KEY", raising=False)
+def test_search_credential_uses_api_key_or_default_credential():
+    with_key = azure_adapter._coerce_config(
+        {"endpoint": "https://example.search.windows.net", "api_key": SecretStr("test-key")}
+    )
+    without_key = azure_adapter._coerce_config({"endpoint": "https://example.search.windows.net", "api_key": None})
 
-    with pytest.raises(ValueError, match="azure_search_api_key"):
-        KnowledgeRetrievalConfig(
-            backend="azure_ai_search",
-            azure_search_endpoint="https://example.search.windows.net",
-            azure_search_auth_mode="api_key",
-        )
+    assert isinstance(azure_adapter._build_search_credential(with_key), AzureKeyCredential)
+    assert isinstance(azure_adapter._build_search_credential(without_key), DefaultAzureCredential)
 
 
 def test_setup_backend_preserves_secrets_and_prefix(monkeypatch):
@@ -311,8 +309,6 @@ def test_setup_backend_preserves_secrets_and_prefix(monkeypatch):
     backend, backend_config = _setup_backend(config)
 
     assert backend == "azure_ai_search"
-    assert config.azure_search_auth_mode == "api_key"
-    assert backend_config["auth_mode"] == "api_key"
     assert isinstance(backend_config["api_key"], SecretStr)
     assert backend_config["index_prefix"] == "tenant-aiq"
 

@@ -99,14 +99,8 @@ def _coerce_config(config: dict[str, Any] | None) -> SimpleNamespace:
         "start_ttl_cleanup": True,
     }
     values.update(provided)
-    values["auth_mode"] = provided.get(
-        "auth_mode",
-        "api_key" if values["api_key"] else "managed_identity",
-    )
     if not values["endpoint"]:
         raise ValueError("Azure AI Search configuration requires `endpoint`")
-    if values["auth_mode"] not in {"managed_identity", "api_key"}:
-        raise ValueError("Azure AI Search auth_mode must be 'managed_identity' or 'api_key'")
     if values["chunk_overlap"] >= values["chunk_size"]:
         raise ValueError("chunk_overlap must be smaller than chunk_size")
     if not values["use_hybrid"] and values["use_semantic_ranker"]:
@@ -116,12 +110,8 @@ def _coerce_config(config: dict[str, Any] | None) -> SimpleNamespace:
 
 def _build_search_credential(cfg: SimpleNamespace):
     """Pick the Azure SDK credential without exposing secret values."""
-    if cfg.auth_mode == "api_key":
-        api_key = _secret_value(cfg.api_key)
-        if api_key is None:
-            raise ValueError("auth_mode=api_key requires the `api_key` field to be set")
-        return AzureKeyCredential(api_key)
-    return DefaultAzureCredential()
+    api_key = _secret_value(cfg.api_key)
+    return AzureKeyCredential(api_key) if api_key else DefaultAzureCredential()
 
 
 def _secret_value(value: Any) -> str | None:
