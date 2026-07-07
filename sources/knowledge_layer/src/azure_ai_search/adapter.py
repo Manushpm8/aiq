@@ -459,6 +459,14 @@ class AzureAISearchRetriever(_AzureIndexMixin, BaseRetriever):
         top_k: int,
         filters: dict[str, Any] | None,
     ) -> RetrievalResult:
+        if filters and isinstance(filters, dict) and filters.get("$filter"):
+            return RetrievalResult(
+                query=query,
+                backend=_BACKEND_NAME,
+                chunks=[],
+                success=False,
+                error_message="Raw Azure AI Search $filter expressions are not supported",
+            )
         try:
             query_vector = self.embedding.get_query_embedding(query)
             client = self._get_client(collection_name)
@@ -477,9 +485,6 @@ class AzureAISearchRetriever(_AzureIndexMixin, BaseRetriever):
             if self.cfg.use_semantic_ranker:
                 search_params["query_type"] = "semantic"
                 search_params["semantic_configuration_name"] = _SEMANTIC_CONFIG
-            if filters and isinstance(filters, dict) and (odata_filter := filters.get("$filter")):
-                search_params["filter"] = odata_filter
-
             chunks = [self.normalize(hit) for hit in client.search(**search_params)]
             return RetrievalResult(query=query, backend=_BACKEND_NAME, chunks=chunks, success=True)
         except ResourceNotFoundError:
