@@ -221,7 +221,10 @@ def test_backend_registered_and_implements_sdk_contracts():
     assert issubclass(AzureAISearchRetriever, BaseRetriever)
 
 
-def test_config_requires_endpoint_and_valid_hybrid_semantic_combination():
+def test_config_requires_endpoint_and_valid_hybrid_semantic_combination(monkeypatch):
+    monkeypatch.delenv("AZURE_SEARCH_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_SEARCH_API_KEY", raising=False)
+
     with pytest.raises(ValueError, match="azure_search_endpoint"):
         KnowledgeRetrievalConfig(backend="azure_ai_search")
     config = KnowledgeRetrievalConfig(
@@ -280,7 +283,9 @@ def test_shared_embedding_defaults_match_adapter(monkeypatch):
     assert adapter_config.embed_dim == config.embed_dim
 
 
-def test_api_key_auth_requires_secret():
+def test_api_key_auth_requires_secret(monkeypatch):
+    monkeypatch.delenv("AZURE_SEARCH_API_KEY", raising=False)
+
     with pytest.raises(ValueError, match="azure_search_api_key"):
         KnowledgeRetrievalConfig(
             backend="azure_ai_search",
@@ -296,7 +301,7 @@ def test_setup_backend_preserves_secrets_and_prefix(monkeypatch):
         backend="azure_ai_search",
         azure_search_endpoint="https://example.search.windows.net",
         azure_search_auth_mode="api_key",
-        azure_search_api_key="test-search-key", # pragma: allowlist secret
+        azure_search_api_key="test-search-key",  # pragma: allowlist secret
         azure_search_index_prefix="tenant-aiq",
     )
 
