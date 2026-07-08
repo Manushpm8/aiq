@@ -34,8 +34,8 @@ At each configured boundary, guardrails can make one of three decisions:
 | Modify | Replace the selected input or output field with the modified content returned by the rail. |
 | Block | Return the configured refusal response instead of continuing with the blocked content. |
 
-Guardrail evaluation failures are fail-closed at these AI-Q middleware boundaries: the middleware logs the failure and
-returns the configured refusal rather than allowing unevaluated content to continue.
+Input-rail evaluation exceptions are caught, logged, and converted to the middleware refusal response. Output-rail
+evaluation exceptions are not converted to a refusal; they propagate and fail the invocation.
 
 ## Configuration Shape
 
