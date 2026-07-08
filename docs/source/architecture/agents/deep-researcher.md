@@ -125,9 +125,10 @@ mapped tools before constructing the active deep-research agent. Configured
 tools that are not mapped to a registry source remain active:
 
 - `None` makes all configured tools available.
-- `[]` removes mapped data-source tools while retaining unmapped utility tools.
+- `[]` removes mapped data-source tools while retaining unmapped configured
+  tools, including utilities.
 - A populated list admits only tools mapped to those source IDs, plus unmapped
-  utility tools.
+  configured tools, including utilities.
 
 The optional source router receives a catalog containing only mapped sources
 within this boundary. Unmapped configured or utility tools do not appear in
