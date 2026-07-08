@@ -26,17 +26,30 @@ Not for running the blueprint itself — it calls cloud-hosted LLM APIs. You onl
 **What's the difference between shallow and deep research?**
 
 - **Shallow research** is fast (30-60s), uses a single agent with bounded tool calls, and produces concise answers with citations. Best for simple factual queries.
-- **Deep research** is thorough (2-10min), uses a multi-agent pipeline (planner + researcher + orchestrator), and produces comprehensive reports with structured sections and numbered references. Best for complex multi-faceted topics.
+- **Deep research** is thorough (2-10min). An orchestrator coordinates an optional advisory source router, a planner, concurrent researcher workers, and a writer that performs final synthesis. Best for complex multi-faceted topics and output shapes that need evidence from several focused queries.
 
 The [Intent Classifier](../architecture/agents/intent-classifier.md) automatically routes queries to the appropriate depth.
 
 **Can I disable the clarifier step?**
 
-Yes. Refer to [Human-in-the-Loop](../customization/hitl.md) for configuration options. You can disable the clarifier entirely or limit how many clarification questions it asks.
+Yes. The clarifier gathers missing context or the requested output type;
+research planning starts afterward inside the deep-research workflow. Refer
+to [Human-in-the-Loop](../customization/hitl.md) for configuration options.
+You can disable the clarifier entirely or limit how many clarification
+questions it asks.
 
 **What happens when shallow research escalates to deep?**
 
-If `enable_escalation: true` in the workflow config, the orchestrator evaluates the shallow research result. If it detects insufficient coverage (response too short, "unable to find" keywords), it escalates to the clarifier and then deep research. Refer to [Architecture Overview](../architecture/overview.md).
+If `enable_escalation: true` in the workflow config, the orchestrator evaluates the shallow research result. If it detects insufficient coverage (response too short, "unable to find" keywords), it escalates to the clarifier and then deep research. The clarifier asks only for missing context; planning happens inside the deep-research workflow. Refer to [Architecture Overview](../architecture/overview.md).
+
+**How does deep research choose data sources?**
+
+The request's `data_sources` selection is a hard tool boundary. The optional
+source router recommends a domain and source ordering only from that allowed
+set. The planner then makes the final tool choices in structured
+`ResearchQuery` objects, which `run_research_batch` sends to concurrent
+researcher workers. The router cannot re-enable a source that the user did not
+select.
 
 ## Tools and Sources
 
