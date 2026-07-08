@@ -20,6 +20,7 @@ Release v2.2.0 (Unreleased)
 - Opt-in durable artifact capture stores metadata in SQL and bytes in SQL or S3-compatible storage, with authenticated list/content endpoints; successful-run final harvesting remains best-effort
 - Opt-in NeMo Guardrails middleware covers selected workflow and agent input/output boundaries; defining middleware does not activate every boundary
 - Opt-in content encryption protects final async output and selected artifact event content only; it is off by default, forward-only, and does not encrypt checkpoints or most job/event metadata
+- Summary Store database logging masks URL passwords and removes query parameters so credentials and query-string secrets are not written to initialization or lifecycle logs
 
 **Agent Skills, UX, and developer workflow**
 

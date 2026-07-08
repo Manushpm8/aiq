@@ -152,6 +152,10 @@ functions:
     _type: tavily_web_search
     max_results: 2
     advanced_search: true
+
+  proxied_web_search_tool:
+    _type: tavily_web_search
+    api_base_url: https://search-proxy.example.com
 ```
 
 | Parameter | Type | Default | Description |
@@ -162,6 +166,7 @@ functions:
 | `max_retries` | `int` | `3` | Number of retry attempts on search failure. |
 | `advanced_search` | `bool` | `false` | Use Tavily's advanced search mode for deeper, more thorough results. |
 | `max_content_length` | `int` | `None` | Truncate each result's content to this many characters. Reduces token usage. |
+| `api_base_url` | `str` | `None` | Optional custom or proxy-compatible Tavily API base URL. A non-empty value is passed to the Tavily client; `None` uses the client's default endpoint. |
 
 ### `exa_web_search`
 

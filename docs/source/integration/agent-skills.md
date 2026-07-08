@@ -66,6 +66,24 @@ For local non-container use, the deploy skill should prefer the backend-only Age
 
 This starts the AI-Q API backend required by `aiq-research` without starting the browser UI.
 
+## Report Follow-Up and Portable Outputs
+
+The `aiq-research` helper exposes the completed-report and durable-artifact operations as
+public commands:
+
+```bash
+python3 $SKILL_DIR/scripts/aiq.py report_edit <JOB_ID> "<EDIT_INSTRUCTIONS>"
+python3 $SKILL_DIR/scripts/aiq.py report <JOB_ID> --out-dir ./my-report
+python3 $SKILL_DIR/scripts/aiq.py artifacts <JOB_ID> --download-dir ./aiq-artifacts
+```
+
+`report_edit` submits a child job for a cosmetic rewrite and polls it to completion; the
+parent report remains unchanged. `report --out-dir` writes `report.md` plus an `artifacts/`
+directory, downloads the job's durable artifacts, and rewrites embedded `artifact://`
+image references to local files. `artifacts --download-dir` downloads the artifacts into
+the requested directory and prints their local paths; omit `--download-dir` to list the
+artifact metadata without downloading bytes.
+
 ## Example Invocations
 
 After the skills are installed, users can ask their coding harness for AI-Q actions in natural language. Research-shaped prompts route to `aiq-research`; install, deploy, run, stop, UI, CLI, Docker, Helm, and troubleshooting prompts route to `aiq-deploy`:

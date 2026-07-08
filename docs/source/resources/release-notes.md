@@ -52,6 +52,11 @@ Generated rich files can be harvested into durable artifact records. Metadata re
 the job database, while bytes use SQL by default or an opt-in S3-compatible store. The
 REST API can list metadata and stream content. With `REQUIRE_AUTH=true`, access is scoped
 to the job's owning principal; the default no-auth mode does not enforce job ownership.
+Artifact images referenced by a report render inline in the web UI. Markdown downloads
+rewrite those references to artifact content URLs, while PDF export embeds the resolved
+images. The `aiq-research` skill can download all durable artifacts or create a portable
+bundle containing `report.md` and an `artifacts/` directory with embedded artifact image
+references rewritten to local files. See [Agent Skills for Coding Harnesses](../integration/agent-skills.md#report-follow-up-and-portable-outputs).
 See [REST API](../integration/rest-api.md#durable-sandbox-artifacts) and
 [Production Artifact Storage](../deployment/production.md#artifact-storage).
 
@@ -72,6 +77,8 @@ PR, prompt/model, and CI workflows. See [Agent Skills for Coding Harnesses](../i
 The web experience now surfaces activity from concurrent researcher workers, restores
 and expires research sessions more predictably, and hardens outbound WebSocket delivery.
 The clarifier gathers source context before asking a user to narrow an ambiguous request.
+Summary Store database logs now mask URL passwords and omit all query parameters, keeping
+credentials and query-string secrets out of initialization and lifecycle messages.
 Contributor tooling adds governance checks, a product-level Agent Skill evaluation gate,
 and reusable maintainer skills. AI-Q now pins NeMo Agent Toolkit 1.8.0.
 
