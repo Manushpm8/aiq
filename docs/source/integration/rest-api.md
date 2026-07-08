@@ -354,12 +354,11 @@ one server-wide configured/default retention duration and compares it with each 
 for a longer-expiry job can be removed before that job expires. Do not rely on per-job
 artifact retention alignment unless the runtime contract changes.
 
-Captured PNG, JPEG, WebP, GIF, and PDF files use content-magic validation. Text-oriented
-formats such as CSV, JSON, Markdown, and notebooks can use an allowed filename extension
-when no recognized magic signature exists. Only magic-confirmed PNG, JPEG, and WebP
-images are served with `Content-Disposition: inline`; SVG, HTML, notebooks, PDFs, and all
-other types are forced to `attachment`. Every content response sets
-`X-Content-Type-Options: nosniff`.
+Raster images require matching content magic. PDF and allowed text/data formats such as
+CSV, JSON, Markdown, and notebooks may fall back to allowlisted extension-based MIME
+classification. Only magic-confirmed PNG, JPEG, and WebP images are served with
+`Content-Disposition: inline`; SVG, HTML, notebooks, PDFs, and all other types are forced
+to `attachment`. Every content response sets `X-Content-Type-Options: nosniff`.
 
 ### Get Final Report
 
