@@ -7,12 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 
 AI-Q can use the built-in OpenSearch knowledge backend with Amazon OpenSearch Serverless vector collections. The backend
 uses SigV4 service `aoss`, creates one OpenSearch index per AI-Q collection/session, and supports Dask ingestion workers
-by creating the OpenSearch client inside the worker process.
+by creating the OpenSearch client inside the worker process. See [Knowledge Layer](../customization/knowledge-layer.md)
+for how OpenSearch compares with the LlamaIndex and Foundational RAG backends.
 
 ```{note}
 **Migrating from AI-Q v1.0.** On v1.0, OpenSearch support shipped through a custom Docker image
 built from [`awslabs/ai-on-eks`](https://github.com/awslabs/ai-on-eks) via `./deploy.sh build`. On
-v2.0, OpenSearch is a built-in knowledge backend selected through workflow YAML
+AI-Q 2.2, OpenSearch is a built-in knowledge backend selected through workflow YAML
 (`backend: opensearch`). You no longer need to maintain a custom image build pipeline.
 ```
 
@@ -64,6 +65,12 @@ aws eks describe-addon --cluster-name <cluster-name> --addon-name eks-pod-identi
 ```
 
 Expected: `ACTIVE`.
+
+For a source checkout or custom image, install the backend dependencies with:
+
+```bash
+uv pip install -e "sources/knowledge_layer[opensearch]"
+```
 
 ## Create the OpenSearch Serverless collection
 

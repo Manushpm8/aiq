@@ -61,8 +61,10 @@ prompted to follow the recorded order.
 
 - **Tavily Web Search** — General web search (requires `TAVILY_API_KEY`)
 - **Exa Web Search** — General web search via Exa (requires `EXA_API_KEY`)
-- **Google Scholar Paper Search** — Academic paper search (requires `SERPER_API_KEY`)
-- **Knowledge Layer** — Document retrieval from local or hosted vector stores
+- **DuckDuckGo News Search** — Recent news search (no API key)
+- **Polymarket Prediction Markets** — Events and market-implied probabilities (no API key)
+- **Google Scholar Paper Search** — Academic search through Serper, SerpAPI, or SearchAPI (requires the selected provider's key)
+- **Knowledge Layer** — Document retrieval through LlamaIndex, Foundational RAG, or OpenSearch
 
 Refer to [Tools and Sources](../customization/tools-and-sources.md).
 
@@ -76,8 +78,11 @@ Yes. Refer to [Adding a Tool](../extending/adding-a-tool.md) for an end-to-end g
 
 - **LlamaIndex** (ChromaDB) for development and prototyping — runs locally, no external services needed
 - **Foundational RAG** for production — connects to NVIDIA RAG Blueprint, supports multi-user with Milvus
+- **OpenSearch** for an existing OpenSearch deployment or AWS-managed vector retrieval — supports self-hosted/basic auth,
+  Amazon OpenSearch Service, and Amazon OpenSearch Serverless with SigV4
 
-Refer to [Knowledge Layer](../customization/knowledge-layer.md).
+Refer to [Knowledge Layer](../customization/knowledge-layer.md). For AOSS on EKS, use the
+[Amazon OpenSearch Serverless guide](../deployment/aws-opensearch-serverless.md).
 
 **How do I upload documents?**
 
