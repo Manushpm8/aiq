@@ -115,17 +115,21 @@ You can run a small subset of queries first using the `filter.allowlist` to vali
 
 ## Cost Analysis
 
-Running the profiler tells you *what happened*. The tokenomics report tells you *what it cost* — broken down by model, phase (Orchestrator / Planner / Researcher), and external tool API.
+Running the profiler tells you *what happened*. The tokenomics report tells you *what it cost* — broken down by
+model and external tool API, with a best-effort phase view (Orchestrator / Planner / Researcher).
 
 ### Why a dedicated cost report?
 
 LLM token costs alone do not capture the full picture of a research agent run:
 
 - **Search APIs are a significant cost driver.** In a typical Deep Research Bench run with 5 queries, Tavily advanced search accounts for roughly 95 calls at $0.016/call — around $1.52, or ~30% of the total run cost.
-- **Phase attribution is invisible to standard tooling.** The Planner and Researcher subagents run as inline LangGraph graphs inside the orchestrator. Standard observability backends report all LLM calls under a single function name and cannot split cost by phase.
+- **Native phase attribution is incomplete.** NAT traces do not consistently expose a role on each LLM call, so
+  the current adapter cannot produce authoritative per-role accounting for every deep-research execution path.
 - **Cached tokens are billed at a discount.** Without explicit tracking, you cannot measure cache hit rates or quantify the savings from prompt caching.
 
-The tokenomics report addresses all three. It reconstructs phase attribution from timing windows in the NAT trace, separately tracks per-tool API charges, and reports cache savings alongside raw token costs.
+The tokenomics report separately tracks per-tool API charges and reports cache savings alongside raw token costs.
+It also infers phase buckets from the task timing windows that the current adapter recognizes; treat those buckets
+as directional because unrecognized subagent work is assigned to the orchestrator bucket.
 
 ### Configuring Pricing
 
@@ -187,7 +191,9 @@ The report is organized into six tabs. Each chart includes a subtitle explaining
 
 #### Overview
 
-Top-level stat cards: total cost (LLM + tools), LLM cost, tool API cost, cache savings, prompt/completion token totals, and LLM call count. Below the cards, a per-query summary table and cost breakdown by model and phase.
+Top-level stat cards: total cost (LLM + tools), LLM cost, tool API cost, cache savings, prompt/completion token totals,
+and LLM call count. Below the cards, a per-query summary table, cost breakdown by model, and best-effort phase
+buckets.
 
 Use this tab for a quick health check: if tool API cost is comparable to LLM cost, search frequency is a primary optimization target.
 
@@ -196,10 +202,10 @@ Use this tab for a quick health check: if tool API cost is comparable to LLM cos
 | Chart | What it shows |
 |-------|---------------|
 | Cost Split by Model | Donut chart of budget allocation across models. |
-| Cost by Phase | Horizontal bar: Orchestrator / Planner / Researcher. High Researcher share means many parallel search-heavy sub-tasks. |
+| Cost by Phase | Best-effort Orchestrator / Planner / Researcher buckets. The Orchestrator bucket can include unrecognized subagent calls; do not read it as role-exclusive accounting. |
 | Tool API Cost by Tool | Per-tool total cost and call count. Shown as a call-count bar when all tool costs are $0 (pricing not yet configured). |
 | Per-Query Cost Distribution | Histogram of query costs. Hidden when fewer than 10 queries are available. A long right tail means a few hard queries are inflating the average. |
-| Cost by Phase per Query | Stacked bar: one column per query, one color per phase. Spots outlier queries and identifies which phase drove the spike. |
+| Cost by Phase per Query | Stacked best-effort phase buckets per query. Use this to find outliers, then inspect the trace before attributing a spike to a role. |
 
 #### Latency
 
@@ -217,7 +223,7 @@ The most detailed tab. All statistics are over individual LLM call observations 
 | Throughput (TPS by model) | Low TPS with small OSL = network overhead, not slow generation. |
 | Token Budget (cache breakdown) | Green = cached (cheaper); grey = uncached; blue = completion. Maximize green. |
 | ISL vs Latency scatter | Diagonal trend = prompt-bound; flat cloud = compute-bound. |
-| Token Mix by Phase | Which phase consumes tokens and how much is cached per phase. |
+| Token Mix by Phase | Token and cache mix across best-effort phase buckets; unrecognized subagent calls appear as orchestrator. |
 | NOVA-Predicted vs Actual OSL | Pre-call output length estimates vs actual. Hidden when estimates are post-hoc filled (trivially perfect, not informative). |
 
 #### Efficiency
@@ -234,11 +240,21 @@ Full per-query table: cost, ISL, OSL, cached tokens, ISL:OSL ratio, LLM call cou
 
 ### Subagent Phase Attribution
 
-The Deep Research Agent runs three logical parts: an **Orchestrator**, a **Planner**, and one or more parallel **Researcher** instances. The workflow is registered as `deep_research_agent`. NAT profiler traces still include `FUNCTION_START` / `FUNCTION_END` for **tools** (for example search), but Planner and Researcher runs are implemented **inside the `task` tool** and do not get distinct `FUNCTION_*` names. Typical traces also omit per-step metadata such as `function_ancestry` for subagent identity.
+The 2.2 Deep Research Agent has an orchestrator, an optional source router, a planner, parallel researcher workers,
+and a writer. The current adapter in `src/aiq_agent/tokenomics/nat_adapter.py` recognizes a `task` timing window
+only when its `subagent_type` is `planner-agent` or `researcher-agent`. It maps an `LLM_END` to a recognized window
+using the call's completion timestamp; calls outside those windows fall into `orchestrator-phase`.
 
-Phase attribution is therefore inferred from **timing windows**: each `task` TOOL_START/END carries `subagent_type` and brackets one subagent invocation. Each `LLM_END` uses **`event_timestamp`** (completion time): if it falls inside a task window, that phase applies; otherwise orchestrator. Overlapping researcher windows (parallel invocations) are all labelled `researcher-phase` — the instance is ambiguous, but the phase is correct.
+This does not align completely with the 2.2 runtime. The planner is delegated through `task()`, but researcher
+workers are invoked directly by `run_research_batch` rather than through individual `task()` calls. The optional
+`source-router-agent` and `writer-agent` are delegated through `task()`, but their names are not recognized by the
+adapter. Their LLM calls, and the current researcher-worker calls, can therefore appear in `orchestrator-phase`.
+The bucket is partly an **unattributed/default bucket**, not proof that the orchestrator model performed the work.
 
-Cost breakdowns by phase stay accurate without native subagent scopes in NAT. If NAT later exposes phase on each step (for example via `function_ancestry` or explicit `FUNCTION_*` boundaries for subagents), the logic in `src/aiq_agent/tokenomics/nat_adapter.py` can be simplified to read that field instead of joining on timestamps.
+Phase charts are consequently best-effort diagnostics, not correct per-role cost accounting for 2.2. Overall
+token and cost totals remain useful independently of that distribution, subject to the completeness of the trace
+and pricing configuration. Native role metadata on each LLM step, or adapter support for every current execution
+path, is required before the phase split can be treated as authoritative.
 
 ### Python API
 

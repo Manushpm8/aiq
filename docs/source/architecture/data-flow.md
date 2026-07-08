@@ -94,7 +94,7 @@ handler) translates LangChain lifecycle events into these SSE events.
 | `llm.end` | `llm` | `end` | LLM invocation completes; includes usage metadata and optional thinking/reasoning |
 | `tool.start` | `tool` | `start` | Tool execution begins; includes tool name and input |
 | `tool.end` | `tool` | `end` | Tool execution completes; may emit `citation_source` artifacts for search tools |
-| `artifact.update` | `artifact` | `update` | Artifact created or updated (files, citations, todos, outputs) |
+| `artifact.update` | `artifact` | `update` | Event-state update (files, citations, todos, outputs) or metadata notification for a captured durable artifact |
 | `job.update` | `job` | `update` | Retry notification when a chain (LLM call) fails and is retried |
 | `job.error` | `job` | -- | Error during job execution |
 | `job.heartbeat` | `job` | -- | Periodic heartbeat from Dask worker (every 30s); keeps SSE alive and aids ghost job detection |
@@ -120,17 +120,28 @@ Every SSE event follows the `IntermediateStepEvent` schema:
 }
 ```
 
-### Artifact Types
+### Event-Derived and Durable Artifacts
 
-The `artifact.update` event carries a `type` field indicating the artifact kind:
+Most `artifact.update` events carry event-derived state used for live UI updates and replay. The
+`GET /v1/jobs/async/job/{job_id}/state` endpoint reconstructs tool calls, outputs, and citations from those stored
+events.
 
 | Artifact Type | Description |
 | ------------- | ----------- |
-| `file` | Virtual filesystem file created by the deep researcher |
+| `file` | Virtual-filesystem file content or metadata emitted by a deep-research tool |
 | `output` | Intermediate output (draft section, summary) |
 | `citation_source` | A source URL or reference discovered during research |
 | `citation_use` | An inline citation placed in the report |
 | `todo` | A research task tracked by `TodoListMiddleware` |
+| `artifact` | Metadata notification for a sandbox-generated file already captured in the durable artifact store; the event does not contain the file bytes |
+
+Durable sandbox artifacts are a separate persistence contract for generated files such as charts, CSVs,
+notebooks, and documents. Capture is opt-in and best-effort on the successful report path. The durable store, not
+the replayed event state, is authoritative for those records and bytes: list metadata with
+`GET /v1/jobs/async/job/{job_id}/artifacts` and fetch content with
+`GET /v1/jobs/async/job/{job_id}/artifacts/{artifact_id}/content`. See the
+[REST API](../integration/rest-api.md#durable-sandbox-artifacts) for the complete capture, authorization, retention,
+and content-serving contract.
 
 ## Reconnection and Replay
 
@@ -181,18 +192,20 @@ sequenceDiagram
    reconnects, the stream replays all stored events and immediately sends the
    terminal `job.status` event.
 
-## API Endpoints
+## Representative API Endpoints
+
+These are the endpoints that drive the core lifecycle shown above. The [REST API](../integration/rest-api.md) is
+the canonical, complete endpoint inventory, including report follow-up, final-report retrieval, durable artifacts,
+data sources, health checks, and their error and authorization semantics.
 
 | Method | Endpoint | Description |
 | ------ | -------- | ----------- |
-| `GET` | `/v1/jobs/async/agents` | List available agent types |
 | `POST` | `/v1/jobs/async/submit` | Submit a new async job |
 | `GET` | `/v1/jobs/async/job/{job_id}` | Get job status |
 | `GET` | `/v1/jobs/async/job/{job_id}/stream` | SSE stream from beginning |
 | `GET` | `/v1/jobs/async/job/{job_id}/stream/{last_event_id}` | SSE stream from event ID (reconnection) |
 | `POST` | `/v1/jobs/async/job/{job_id}/cancel` | Cancel a running job |
-| `GET` | `/v1/jobs/async/job/{job_id}/state` | Get artifacts from event store |
-| `GET` | `/v1/jobs/async/job/{job_id}/report` | Get final report |
+| `GET` | `/v1/jobs/async/job/{job_id}/state` | Reconstruct event-derived tool calls, outputs, and citations |
 
 ## Cancellation
 
