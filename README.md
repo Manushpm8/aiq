@@ -38,6 +38,7 @@ limitations under the License.
   - [Command-line interface (CLI)](#command-line-interface-cli)
   - [Web UI](#web-ui)
   - [Async Deep Research Jobs](#async-deep-research-jobs)
+  - [MCP Server](#mcp-server)
   - [Benchmarks](#benchmarks)
   - [Jupyter Notebooks](#jupyter-notebooks)
 - [Evaluating the Workflow](#evaluating-the-workflow)
@@ -240,6 +241,7 @@ The `configs/` directory holds YAML workflow configs that define agents, tools, 
 | `config_web_default_llamaindex.yml` | Nemotron 3 Nano 30B, GPT-OSS 120B, Nemotron Mini 4B | Web default. LlamaIndex knowledge retrieval; web search; optional paper search (requires `SERPER_API_KEY`). Nemotron Super is commented out but can be enabled for higher quality. |
 | `config_web_frag.yml` | Nemotron 3 Nano 30B, GPT-OSS 120B | Web + Foundational RAG (external RAG server). Helm default. See [RAG Blueprint](https://github.com/NVIDIA-AI-Blueprints/rag/tree/main) for an example RAG deployment. Nemotron Super is commented out but can be enabled for higher quality. |
 | `config_frontier_models.yml` | GPT-5.2 (orchestrator/planner), Nemotron 3 Nano 30B, Nemotron Mini 4B | Hybrid: frontier orchestrator/planner, open researcher. LlamaIndex; web search; optional paper search (requires `SERPER_API_KEY`). Requires `OPENAI_API_KEY`. Nemotron Super is commented out but can be enabled for higher quality. |
+| `config_mcp.yml` | Nemotron 3 Super 120B | Standalone MCP server. Public NIM + Tavily research with PostgreSQL-backed stateless submit/poll/report. Requires `NVIDIA_API_KEY`, `TAVILY_API_KEY`, and `AIQ_CHECKPOINT_DB`. |
 
 ## Ways to Run the Agents
 
@@ -299,6 +301,21 @@ For more details, refer to:
 ### Async Deep Research Jobs
 
 Endpoints, SSE streaming, and debug console: refer to [frontends/aiq_api/README.md](frontends/aiq_api/README.md).
+
+### MCP Server
+
+Expose AI-Q to MCP clients through the standalone, stateless Streamable HTTP server:
+
+```bash
+: "${NVIDIA_API_KEY:?Set NVIDIA_API_KEY}"
+: "${TAVILY_API_KEY:?Set TAVILY_API_KEY}"
+AIQ_CHECKPOINT_DB=postgresql://localhost/aiq_jobs uv run aiq-mcp-server
+```
+
+The endpoint defaults to `http://localhost:9001/mcp` and advertises exactly `submit_query`, `poll_query`, and
+`get_final_report`. This public server intentionally has no authentication; job UUIDs are bearer capabilities and
+the endpoint must not be exposed directly to an untrusted network. See [Expose AI-Q as an MCP Server](docs/source/integration/mcp-server.md)
+for the exact JSON protocol, health contracts, security model, and container deployment.
 
 ### Benchmarks
 
