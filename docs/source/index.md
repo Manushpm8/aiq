@@ -13,6 +13,7 @@ An NVIDIA blueprint for AI-powered deep research, built on the NeMo Agent Toolki
 
 | I want to... | Go to |
 |--------------|-------|
+| See the merged AI-Q 2.2 candidate scope | [AI-Q 2.2 Release Notes](./resources/release-notes.md) |
 | Read the docs in order | [Developer Guide](./get-started/developer-guide.md) |
 | Run the blueprint quickly | [Quick Start](./get-started/quick-start.md) |
 | Understand how it works | [Architecture Overview](./architecture/overview.md) |
@@ -20,6 +21,11 @@ An NVIDIA blueprint for AI-powered deep research, built on the NeMo Agent Toolki
 | Add new tools or integrations | [Extending](./extending/index.md) |
 | Deploy to production | [Deployment](./deployment/index.md) |
 | Evaluate quality | [Evaluation](./evaluation/index.md) |
+
+## What's New in 2.2
+
+AI-Q 2.2 is still unreleased. Read the [AI-Q 2.2 Release Notes](./resources/release-notes.md)
+for the merged release-candidate capabilities, configuration guidance, and current limitations.
 
 ```{toctree}
 :hidden:
@@ -128,6 +134,7 @@ Knowledge Layer SDK <./reference/knowledge-layer-sdk.md>
 :hidden:
 :caption: Resources
 
+AI-Q 2.2 Release Notes <./resources/release-notes.md>
 Changelog <./resources/changelog.md>
 Troubleshooting <./resources/troubleshooting.md>
 FAQ <./resources/faq.md>

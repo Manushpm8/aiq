@@ -137,6 +137,8 @@ To view detailed agent execution logs (tool calls, routing decisions, LLM intera
 
 Now that you have the system running, explore these topics:
 
+- **[Explore AI-Q 2.2](../resources/release-notes.md)** -- Review the unreleased candidate scope and choose among the focused [configuration profiles](../customization/configuration-reference.md#provided-config-files)
+- **[Agent Skills](../integration/agent-skills.md)** -- Deploy and call AI-Q from a compatible coding harness
 - **[Architecture Overview](../architecture/overview.md)** -- Understand how the orchestrator, shallow researcher, and deep researcher work together
 - **[Customization](../customization/index.md)** -- Swap models, configure tools, adjust prompts, and tune agent behavior
 - **[Deployment](../deployment/index.md)** -- Run with Docker Compose

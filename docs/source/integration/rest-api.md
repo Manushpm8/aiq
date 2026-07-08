@@ -14,6 +14,7 @@ The API is served when running in **web mode** (`nat serve`). CLI mode (`nat run
 NeMo Agent Toolkit provides the core infrastructure: job tracking, [Dask](https://www.dask.org/) scheduling, and SQLite/PostgreSQL persistence. The AI-Q API plugin (`aiq_api`) extends this with:
 
 - **Async Jobs API** -- submit research queries to any registered agent, track progress through SSE
+- **Durable Artifact API** -- list metadata and stream generated files captured from configured sandboxes
 - **Knowledge API** -- manage document collections and trigger ingestion (when a knowledge function is configured)
 - **Event replay** -- reconnect to an in-progress job and replay historical events from any point
 
@@ -32,7 +33,9 @@ Base path: `/v1/jobs/async`
 | `GET` | `/v1/jobs/async/job/{job_id}/stream/{last_event_id}` | SSE stream from event ID (reconnection) |
 | `POST` | `/v1/jobs/async/job/{job_id}/cancel` | Cancel a running job |
 | `POST` | `/v1/jobs/async/job/{job_id}/report/edit` | Create a revised report from a completed report job |
-| `GET` | `/v1/jobs/async/job/{job_id}/state` | Get accumulated job artifacts |
+| `GET` | `/v1/jobs/async/job/{job_id}/state` | Get event-derived tool calls, outputs, and citations |
+| `GET` | `/v1/jobs/async/job/{job_id}/artifacts` | List durable sandbox artifact metadata |
+| `GET` | `/v1/jobs/async/job/{job_id}/artifacts/{artifact_id}/content` | Stream one durable artifact's bytes |
 | `GET` | `/v1/jobs/async/job/{job_id}/report` | Get final research report |
 | `GET` | `/v1/data_sources` | List available data sources |
 | `GET` | `/live` | Process liveness check (no dependency checks) |
@@ -232,9 +235,11 @@ curl -X POST http://localhost:8000/v1/jobs/async/job/{job_id}/cancel
 | `400` | Job is not in `RUNNING` state |
 | `404` | Job not found |
 
-### Get Job Artifacts
+### Get Event-Derived Job State
 
-Returns accumulated tool calls, outputs, and source citations from a job.
+Returns accumulated tool calls, outputs, and source citations reconstructed from job
+events. This is distinct from the durable sandbox artifact endpoints, which store file
+metadata and bytes outside the event-derived state document.
 
 ```bash
 curl http://localhost:8000/v1/jobs/async/job/{job_id}/state
@@ -274,6 +279,77 @@ curl http://localhost:8000/v1/jobs/async/job/{job_id}/state
   }
 }
 ```
+
+### Durable Sandbox Artifacts
+
+Durable artifacts are generated files such as charts, CSVs, notebooks, or documents
+harvested from a configured deep-research sandbox. Capture is opt-in: the deep researcher
+must have a sandbox and `artifact_capture.enabled: true`, and the API/worker must be able
+to open the artifact store. The final harvest on the successful report path is
+best-effort; sandbox execution alone does not guarantee that every generated file is
+persisted.
+
+#### List Artifact Metadata
+
+```bash
+curl http://localhost:8000/v1/jobs/async/job/{job_id}/artifacts
+```
+
+**Response:**
+
+```json
+{
+  "job_id": "abc123",
+  "artifacts": [
+    {
+      "artifact_id": "a1b2c3d4",
+      "job_id": "abc123",
+      "kind": "image",
+      "mime_type": "image/png",
+      "filename": "market-share.png",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size_bytes": 184320,
+      "title": "Market share",
+      "caption": "Market share by vendor",
+      "inline": true,
+      "workflow": "researcher-agent",
+      "source_tool_call_id": "call_123",
+      "provenance": {
+        "command": "python /tmp/chart.py",
+        "script_sha256": null,
+        "input_file_hashes": {},
+        "package_snapshot": []
+      },
+      "created_at": "2026-07-08T12:00:00Z",
+      "status": "available"
+    }
+  ]
+}
+```
+
+Each item contains `artifact_id`, `job_id`, `kind`, `mime_type`, `filename`,
+`sha256`, `size_bytes`, optional `title` and `caption`, `inline`, optional
+`workflow` and `source_tool_call_id`, `provenance`, `created_at`, and `status`.
+The response intentionally excludes `storage_uri` and `sandbox_path`; clients fetch
+bytes through the content endpoint rather than learning storage credentials, hostnames,
+or internal sandbox layout.
+
+#### Get Artifact Content
+
+```bash
+curl -OJ http://localhost:8000/v1/jobs/async/job/{job_id}/artifacts/{artifact_id}/content
+```
+
+Both durable artifact endpoints authorize access through the owning job. When
+authentication is enabled, the caller must be authorized for that job. The job is also
+the retention boundary: artifacts become inaccessible when the job is unavailable, and
+artifact cleanup follows the configured job retention window on a best-effort basis.
+
+The list endpoint returns `404` when the owning job is not found or not accessible. The
+content endpoint returns `404` when either the job or artifact is not found. Content uses
+the artifact's byte-validated MIME type. Only PNG, JPEG, and WebP raster images are served
+with `Content-Disposition: inline`; SVG, HTML, notebooks, PDFs, and all other types are
+forced to `attachment`. Every content response sets `X-Content-Type-Options: nosniff`.
 
 ### Get Final Report
 

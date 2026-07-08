@@ -11,7 +11,7 @@ AI-Q includes portable Agent Skills for coding harnesses that support skill-styl
 
 AI-Q ships two distinct skill sets, separated by audience. This page documents
 the **API-consumer** skills. The maintainer skills are documented in their own
-[README](../../../.agents/skills/README.md).
+[README](https://github.com/NVIDIA-AI-Blueprints/aiq/blob/develop/.agents/skills/README.md).
 
 | | API-consumer skills | Maintainer skills |
 | :-- | :-- | :-- |
@@ -124,7 +124,7 @@ ln -s ../../skills/aiq-research .claude/skills/aiq-research
 ```
 
 The maintainer-skill symlinks are managed alongside the maintainer skill set;
-see the [maintainer skills README](../../../.agents/skills/README.md) for how
+see the [maintainer skills README](https://github.com/NVIDIA-AI-Blueprints/aiq/blob/develop/.agents/skills/README.md) for how
 those are added.
 
 For a user-level install:
