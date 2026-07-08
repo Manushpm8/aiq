@@ -29,7 +29,7 @@ lookup (shallow), or initiate a comprehensive multi-agent investigation (deep).
 | [Intent Classifier](agents/intent-classifier.md) | Single LLM call: classifies intent (meta/research) and depth (shallow/deep) | `agents/chat_researcher/nodes/intent_classifier.py` |
 | [Clarifier Agent](agents/clarifier.md) | Optionally gathers missing context and the requested output type before deep research | `agents/clarifier/agent.py` |
 | [Shallow Researcher](agents/shallow-researcher.md) | Fast, bounded tool-augmented research | `agents/shallow_researcher/agent.py` |
-| [Deep Researcher](agents/deep-researcher.md) | Orchestrates optional source routing, structured planning, concurrent research workers, and writer-only synthesis | `agents/deep_researcher/agent.py` |
+| [Deep Researcher](agents/deep-researcher.md) | Orchestrates optional source routing, structured planning, concurrent research workers, and writer-first synthesis | `agents/deep_researcher/agent.py` |
 | Chat Researcher Orchestrator | [LangGraph](https://docs.langchain.com/oss/python/langgraph/overview) state machine coordinating all agents | `agents/chat_researcher/agent.py` |
 
 ## Orchestrator State Machine
@@ -79,7 +79,7 @@ The central state model carries data through the entire workflow:
 | ----- | ---- | ------- |
 | `messages` | `list[AnyMessage]` | Conversation history (LangGraph message reducer) |
 | `user_info` | `dict` or `None` | Authenticated user information for personalization |
-| `data_sources` | `list[str]` or `None` | Hard per-request tool boundary. `None` uses all configured tools; `[]` keeps only unmapped utility tools; a populated list scopes to the named sources plus unmapped utility tools. |
+| `data_sources` | `list[str]` or `None` | Hard per-request filter for registry-mapped source tools. Unmapped configured or utility tools remain active. |
 | `user_intent` | `IntentResult` or `None` | Classification result: `meta` or `research` |
 | `depth_decision` | `DepthDecision` or `None` | Routing decision: `shallow` or `deep` |
 | `final_report` | `str` or `None` | Final report output from deep research |
@@ -91,7 +91,7 @@ The central state model carries data through the entire workflow:
 ## Design Decisions
 
 - **Two-tier routing**: Keeps common queries fast (single tool-calling loop)
-  while reserving multi-phase deep loops for complex cases. The intent
+  while reserving multi-stage deep research for complex cases. The intent
   classifier makes the routing decision in a single LLM call to minimize
   latency.
 
@@ -102,17 +102,20 @@ The central state model carries data through the entire workflow:
 - **Separated coordination and execution**: The deep-research orchestrator
   invokes optional source-router, planner, and writer task subagents. Research
   queries run through `run_research_batch` as concurrent invocations of a
-  reusable researcher worker, not as `task()` subagents. The writer alone
-  synthesizes the final answer.
+  reusable researcher worker, not as `task()` subagents. The writer is the
+  normative final-synthesis stage. If `/shared/output.md` is missing, the
+  runtime can defensively accept a substantive orchestrator-authored Markdown
+  report; short workflow chatter is rejected.
 
 - **Toolkit-independent agents**: All agents receive dependencies through constructor
   injection for testability. NeMo Agent Toolkit registration is a thin layer in `register.py`
   files.
 
-- **Data source filtering**: Tools are filtered per request based on
-  `data_sources` before the active research agents are constructed. Source
-  routing is advisory within that boundary; the planner makes the final
-  `ResearchQuery` tool choices and cannot restore filtered-out tools.
+- **Data source filtering**: `data_sources` filters tools mapped in the data
+  source registry before the active research agents are constructed. Unmapped
+  configured tools remain active and are absent from the router catalog.
+  Routing is advisory, and `ResearchQuery` preferred and fallback tool names
+  are prompt guidance; workers remain bound to the full request-filtered set.
 
 - **Evaluation-driven defaults**: Routing and research budgets are tuned
   through benchmarks (FreshQA, Deep Research Bench) and can evolve as

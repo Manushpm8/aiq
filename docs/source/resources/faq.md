@@ -44,12 +44,16 @@ If `enable_escalation: true` in the workflow config, the orchestrator evaluates 
 
 **How does deep research choose data sources?**
 
-The request's `data_sources` selection is a hard tool boundary. The optional
-source router recommends a domain and source ordering only from that allowed
-set. The planner then makes the final tool choices in structured
-`ResearchQuery` objects, which `run_research_batch` sends to concurrent
-researcher workers. The router cannot re-enable a source that the user did not
-select.
+The request's `data_sources` selection is a hard boundary for tools mapped in
+`data_source_registry`. Unmapped configured or utility tools remain active
+and do not appear in the router catalog. The optional source router recommends
+mapped sources only from the allowed set and cannot restore a filtered-out
+mapped source.
+
+The planner records preferred and fallback tool names in each structured
+`ResearchQuery` as guidance. `run_research_batch` sends those queries to
+concurrent workers that are bound to the full request-filtered tool set and
+prompted to follow the recorded order.
 
 ## Tools and Sources
 

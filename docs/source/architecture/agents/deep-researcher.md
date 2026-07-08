@@ -28,7 +28,7 @@ answers, tables, comparisons, predictions, and data extractions.
 
 ```mermaid
 graph TD
-    A[Receive DeepResearchAgentState] --> B[Filter configured tools by data_sources]
+    A[Receive DeepResearchAgentState] --> B[Filter registry-mapped tools by data_sources<br/>retain unmapped configured tools]
     B --> C[Build orchestrator and shared runtime]
     C --> D{Source router enabled?}
     D -->|yes| E[task: source-router-agent]
@@ -39,12 +39,16 @@ graph TD
     H --> I[Orchestrator calls run_research_batch<br/>with planned ResearchQuery objects]
     I --> J[Concurrent reusable researcher workers<br/>one worker per ResearchQuery]
     J --> K[Return structured ResearchNotes<br/>and persist /shared/research_note_*.json]
-    K --> L[task: writer-agent]
+    K --> L[Normative task: writer-agent]
     L --> M[Writer reads plan, notes, and captured sources<br/>then writes /shared/output.md]
-    M --> N[Runtime loads writer output]
-    N --> O{Citation verification enabled?}
-    O -->|yes| P[Verify citations against captured sources]
-    O -->|no| Q[Skip citation verification]
+    M --> O[Runtime loads writer output]
+    K -.->|Defensive path if writer delegation is missed| S[Orchestrator emits inline Markdown]
+    S --> U{Passes substantive report gate?}
+    U -->|yes| O
+    U -->|no| V[Error: no final Markdown]
+    O --> T{Citation verification enabled?}
+    T -->|yes| P[Verify citations against captured sources]
+    T -->|no| Q[Skip citation verification]
     P --> R[Sanitize and return final Markdown]
     Q --> R
 
@@ -92,19 +96,20 @@ sequenceDiagram
 ```
 
 The orchestrator serializes dependent stages and tracks progress. It does not
-call source tools directly and does not write the final answer. Source access
-is delegated to the planner and the researcher workers; final synthesis belongs
-to the writer.
+call source tools directly. The normative flow delegates final synthesis to
+the writer; source access is delegated to the planner and researcher workers.
+If the writer output file is missing, the runtime has a defensive fallback for
+a substantive report emitted inline by the orchestrator.
 
 ## Runtime Roles
 
 | Participant | Invocation | Responsibility and output |
 | ----------- | ---------- | ------------------------- |
-| Orchestrator | Root `create_deep_agent` graph | Coordinates stage order, reads the persisted plan, dispatches research batches, and delegates final synthesis. It has `run_research_batch` and helper tools, but no direct source tools. |
+| Orchestrator | Root `create_deep_agent` graph | Coordinates stage order, reads the persisted plan, dispatches research batches, and normally delegates final synthesis. It has `run_research_batch` and helper tools, but no direct source tools. |
 | `source-router-agent` | Optional DeepAgents `task()` subagent | Looks up the configured source catalog, chooses one advisory domain route, and writes a `SourceRoutingPlan` to `/shared/source_routing.json`. It does not research. |
 | `planner-agent` | DeepAgents `task()` subagent | Grounds the requested answer strategy with available source tools and returns a structured `ResearchPlan`. The runtime persists it to `/shared/plan.json`. |
 | Researcher workers | Reusable LangChain runnable invoked by `run_research_batch` | Each worker executes one self-contained `ResearchQuery` and returns structured `ResearchNotes`. Independent workers run concurrently up to the configured limit. |
-| `writer-agent` | DeepAgents `task()` subagent | Reads the plan, research-note files, and captured sources; performs the only final-answer synthesis; and writes `/shared/output.md`. It has no source-search tools and performs no new research. |
+| `writer-agent` | DeepAgents `task()` subagent | Reads the plan, research-note files, and captured sources; performs final-answer synthesis on the normative path; and writes `/shared/output.md`. It has no source-search tools and performs no new research. |
 
 The source router, planner, and writer are task subagents registered with the
 DeepAgents root graph. Researcher workers are different: they are invocations
@@ -114,20 +119,26 @@ not manage top-level workflow todos.
 
 ## Data Source Boundary
 
-`DeepResearchAgentState.data_sources` is the hard per-request source boundary.
-The registration layer filters the configured tool set before constructing the
-active deep-research agent:
+`DeepResearchAgentState.data_sources` is a hard per-request boundary for
+tools mapped in `data_source_registry`. The registration layer filters those
+mapped tools before constructing the active deep-research agent. Configured
+tools that are not mapped to a registry source remain active:
 
 - `None` makes all configured tools available.
 - `[]` removes mapped data-source tools while retaining unmapped utility tools.
 - A populated list admits only tools mapped to those source IDs, plus unmapped
   utility tools.
 
-The optional source router receives a catalog already constrained to this
-boundary. Its recommendations are advisory: they can prioritize allowed tools,
-but cannot add an unselected source. The planner makes the final choice by
-placing exact available tool names into each `ResearchQuery.preferred_tools`
-and `fallback_tools`; researcher workers then execute those query contracts.
+The optional source router receives a catalog containing only mapped sources
+within this boundary. Unmapped configured or utility tools do not appear in
+that catalog even though they remain active. Router recommendations are
+advisory and cannot restore a filtered-out mapped source.
+
+The planner records exact available tool names in each
+`ResearchQuery.preferred_tools` and `fallback_tools` as structured guidance.
+Those fields do not narrow the callable tool set at runtime. Every researcher
+worker is bound to the full request-filtered tool set and is prompted to try
+the preferred and fallback tools in the recorded order.
 
 ## Middleware and Tool Boundaries
 
@@ -152,7 +163,7 @@ what lets `run_research_batch` invoke independent queries concurrently.
 | Field | Type | Default | Description |
 | ----- | ---- | ------- | ----------- |
 | `messages` | `Annotated[list[AnyMessage], add_messages]` | required | Input query and conversation messages managed by the LangGraph message reducer |
-| `data_sources` | `list[str]` or `None` | `None` | Hard per-request boundary for data-source tool filtering |
+| `data_sources` | `list[str]` or `None` | `None` | Hard per-request filter for registry-mapped source tools; unmapped configured tools remain active |
 | `user_info` | `dict` or `None` | `None` | Authenticated user context available to prompts |
 | `tools_info` | `list[dict]` or `None` | `None` | Available-tool metadata |
 | `todos` | `list[dict]` | `[]` | Top-level progress list managed by the orchestrator |
@@ -171,7 +182,7 @@ The architecture is configured through `DeepResearchAgentConfig` (NeMo Agent
 Toolkit type name: `deep_research_agent`). The workflow-shaping parameters
 are summarized here; see the
 [Configuration Reference](../../customization/configuration-reference.md)
-for the complete schema.
+for configuration details.
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
@@ -187,7 +198,7 @@ for the complete schema.
 | `max_research_concurrency` | `int` | `6` | Maximum `ResearchQuery` items accepted and run concurrently per batch call |
 | `skills` | `FunctionRef`, inline `deep_research_skills`, or `None` | `None` | Optional built-in skill assignments by agent name |
 | `sandbox` | `FunctionRef`, inline `deep_research_sandbox`, or `None` | `None` | Optional sandbox profile for DeepAgents `execute` support |
-| `enable_citation_verification` | `bool` | `true` | Verify generated citations against captured sources after writer synthesis |
+| `enable_citation_verification` | `bool` | `true` | Verify generated citations against captured sources after final report extraction |
 | `verbose` | `bool` | `true` | Enable detailed logging |
 
 **Example YAML:**
@@ -243,10 +254,11 @@ The planner uses available source tools to ground a structured
 - Task analysis and the intended answer shape
 - Required answer components and constraints
 - Self-contained `ResearchQuery` objects
-- Exact preferred and fallback tools for each query
+- Preferred and fallback tool guidance for each query
 
-The planner reads source-routing guidance when available, but owns the final
-query and tool choices. The runtime persists its validated plan to
+The planner reads source-routing guidance when available and records the final
+query-level tool preference order. This is prompt guidance rather than runtime
+tool enforcement. The runtime persists the validated plan to
 `/shared/plan.json`.
 
 ### Phase 3: Concurrent Evidence Collection
@@ -256,7 +268,8 @@ The orchestrator passes the plan's independent `ResearchQuery` objects to
 query concurrently, bounded by `max_research_concurrency`. Each worker:
 
 1. Reads the relevant plan context
-2. Uses the query's allowed preferred and fallback tools
+2. Is prompted to follow the query's preferred and fallback tool order while
+   remaining bound to the full request-filtered tool set
 3. Returns validated `ResearchNotes` with findings, sources, gaps, and an
    evidence judgment
 
@@ -265,7 +278,7 @@ The batch tool returns the notes to the orchestrator and persists them under
 notes remain registered and persisted; only failed or missing queries are
 eligible for another call.
 
-### Phase 4: Writer-Only Final Synthesis
+### Phase 4: Writer-First Final Synthesis
 
 The orchestrator delegates once the plan and research notes are available.
 The writer reads `/shared/plan.json`, all research-note files, and the
@@ -274,13 +287,19 @@ edit. The writer performs no new research, writes the complete final answer to
 `/shared/output.md`, and returns a short completion marker. The runtime loads
 the Markdown from that file.
 
+This is the normative synthesis contract. As a defensive compatibility path,
+`_salvage_inline_report()` accepts the orchestrator's final message when the
+output file is missing, but only if the message is substantive Markdown: at
+least 400 characters with a Markdown heading and not merely the writer
+completion marker. Otherwise, missing writer output remains an error.
+
 ### Phase 5: Citation Verification (Post-Processing)
 
 Citation verification is enabled by default and configurable with
 `enable_citation_verification`. When enabled, a deterministic
 post-processing pipeline checks citations against sources captured from
-configured tools. Report sanitization runs after writer synthesis regardless
-of this setting.
+configured tools. Report sanitization runs after final report extraction
+regardless of this setting.
 
 **Location:** `src/aiq_agent/common/citation_verification.py`
 
