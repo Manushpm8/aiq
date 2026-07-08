@@ -340,16 +340,26 @@ or internal sandbox layout.
 curl -OJ http://localhost:8000/v1/jobs/async/job/{job_id}/artifacts/{artifact_id}/content
 ```
 
-Both durable artifact endpoints authorize access through the owning job. When
-authentication is enabled, the caller must be authorized for that job. The job is also
-the retention boundary: artifacts become inaccessible when the job is unavailable, and
-artifact cleanup follows the configured job retention window on a best-effort basis.
+Both durable artifact endpoints first load the owning job. With `REQUIRE_AUTH=true`,
+access is scoped to that job's owning principal. Missing or invalid authentication can
+return `401` or `403`, depending on the configured authentication middleware and principal
+gate; a cross-owner lookup is hidden as `404`. With the default `REQUIRE_AUTH=false`, job
+ownership is not enforced, so any caller with a valid job ID can access its artifacts.
+The list endpoint returns `404` when the owning job is not found; the content endpoint
+returns `404` when either the job or artifact is not found.
 
-The list endpoint returns `404` when the owning job is not found or not accessible. The
-content endpoint returns `404` when either the job or artifact is not found. Content uses
-the artifact's byte-validated MIME type. Only PNG, JPEG, and WebP raster images are served
-with `Content-Disposition: inline`; SVG, HTML, notebooks, PDFs, and all other types are
-forced to `attachment`. Every content response sets `X-Content-Type-Options: nosniff`.
+Artifact cleanup is not tied to each job's `expiry_seconds`. The background cleanup uses
+one server-wide configured/default retention duration and compares it with each artifact's
+`created_at`. Stored artifacts can therefore outlive a shorter-expiry job, while artifacts
+for a longer-expiry job can be removed before that job expires. Do not rely on per-job
+artifact retention alignment unless the runtime contract changes.
+
+Captured PNG, JPEG, WebP, GIF, and PDF files use content-magic validation. Text-oriented
+formats such as CSV, JSON, Markdown, and notebooks can use an allowed filename extension
+when no recognized magic signature exists. Only magic-confirmed PNG, JPEG, and WebP
+images are served with `Content-Disposition: inline`; SVG, HTML, notebooks, PDFs, and all
+other types are forced to `attachment`. Every content response sets
+`X-Content-Type-Options: nosniff`.
 
 ### Get Final Report
 

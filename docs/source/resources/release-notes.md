@@ -15,8 +15,9 @@ The deep-research path now separates advisory source routing, structured plannin
 concurrent evidence collection, and final synthesis. A planner produces validated
 research queries, researcher workers execute independent queries concurrently and
 return structured notes, and a dedicated writer synthesizes the final answer. Source
-tools can also accept bounded batches of inputs. This makes the handoffs explicit while
-preserving the caller's selected data-source boundary. See [Deep Researcher Agent](../architecture/agents/deep-researcher.md)
+tools can also accept bounded batches of inputs. A caller's `data_sources` selection
+constrains tools mapped in the data-source registry; configured unmapped tools, including
+utilities, remain callable. See [Deep Researcher Agent](../architecture/agents/deep-researcher.md)
 and [Automatic Source Routing](../customization/tools-and-sources.md#automatic-source-routing).
 
 The clarifier still gathers missing context and the requested output shape, but it no
@@ -49,8 +50,10 @@ and the [Skills and Sandbox example](../examples/skills-sandbox/index.md).
 
 Generated rich files can be harvested into durable artifact records. Metadata remains in
 the job database, while bytes use SQL by default or an opt-in S3-compatible store. The
-authenticated REST API can list metadata and stream content. See [REST API](../integration/rest-api.md#durable-sandbox-artifacts)
-and [Production Artifact Storage](../deployment/production.md#artifact-storage).
+REST API can list metadata and stream content. With `REQUIRE_AUTH=true`, access is scoped
+to the job's owning principal; the default no-auth mode does not enforce job ownership.
+See [REST API](../integration/rest-api.md#durable-sandbox-artifacts) and
+[Production Artifact Storage](../deployment/production.md#artifact-storage).
 
 AI-Q also ships two consumer Agent Skills: `aiq-deploy` for selecting, starting, and
 validating a deployment, and `aiq-research` for routed chat and async research against a
