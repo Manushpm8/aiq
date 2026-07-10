@@ -125,7 +125,7 @@ Each template receives different variables depending on the agent context.
 | `tools` | `list[dict]` | Orchestrator-callable helper tools and `run_research_batch`; source tools are intentionally excluded |
 | `enable_source_router` | `bool` | Whether to run the advisory source-router stage |
 | `max_research_concurrency` | `int` | Maximum `ResearchQuery` objects accepted in one research batch |
-| `parent_report_context_available` | `bool` | Whether this run is revising an existing report |
+| `parent_report_context_available` | `bool` | Whether mounted parent-report files are available, enabling delta planning and revision instructions |
 | `execution_enabled` | `bool` | Whether a sandbox exposes execution tools |
 | `sandbox_workdir`, `sandbox_artifact_dir` | `str` | Per-job sandbox paths used when execution is enabled |
 
@@ -165,7 +165,7 @@ Each template receives different variables depending on the agent context.
 |----------|------|-------------|
 | `current_datetime` | `str` | Current date and time string |
 | `user_info` | `dict` or `None` | Authenticated user context |
-| `parent_report_context_available` | `bool` | Whether the writer should synthesize a revision of an existing report |
+| `parent_report_context_available` | `bool` | Whether mounted parent-report files are available for standalone revision synthesis with delta evidence |
 | `sandbox_workdir`, `sandbox_artifact_dir` | `str` | Per-job sandbox paths for generated report artifacts |
 
 The writer reads the persisted plan and research notes from `/shared/` and retrieves captured sources through `get_verified_sources`; those inputs are runtime files and tools rather than Jinja variables. The separate `source_registry.j2` fragment receives a `sources` list from `SourceRegistryMiddleware`.

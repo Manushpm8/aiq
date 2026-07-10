@@ -302,7 +302,7 @@ live delivery and replay into the web UI Files tab, whose **Open file** action u
 job-scoped content endpoint below. When `artifact_id` is present, the UI derives that
 same-origin path from the current job and artifact IDs instead of trusting an arbitrary
 event URL. Rejected candidates emit `artifact.warning` with
-`data.path` and `data.reason` instead. See [Data Flow](../architecture/data-flow.md#event-structure)
+`data.path` and `data.reason` instead. Refer to [Data Flow](../architecture/data-flow.md#event-structure)
 for the canonical payload.
 
 #### List Artifact Metadata
@@ -361,6 +361,10 @@ access is scoped to that job's owning principal. Missing or invalid authenticati
 return `401` or `403`, depending on the configured authentication middleware and principal
 gate; a cross-owner lookup is hidden as `404`. With the default `REQUIRE_AUTH=false`, job
 ownership is not enforced, so any caller with a valid job ID can access its artifacts.
+Treat no-auth mode as trusted-local development only; do not expose it on a shared or
+untrusted network. Enable authentication before serving durable artifacts in multi-user or
+externally reachable deployments.
+
 The list endpoint returns `404` when the owning job is not found; the content endpoint
 returns `404` when either the job or artifact is not found.
 
@@ -395,7 +399,7 @@ curl http://localhost:8000/v1/jobs/async/job/{job_id}/report
 }
 ```
 
-For report follow-up child jobs (see [Edit a Report](#edit-a-report-report-follow-up)),
+For report follow-up child jobs (refer to [Edit a Report](#edit-a-report-report-follow-up)),
 `parent_job_id`, `interaction_action` (for example `edit`), and `result_kind` (for example
 `report`) identify the originating report and interaction. They are `null` for root research
 jobs.

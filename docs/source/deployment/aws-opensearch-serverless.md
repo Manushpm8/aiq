@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 AI-Q can use the built-in OpenSearch knowledge backend with Amazon OpenSearch Serverless vector collections. The backend
 uses SigV4 service `aoss`, creates one OpenSearch index per AI-Q collection/session, and supports Dask ingestion workers
-by creating the OpenSearch client inside the worker process. See [Knowledge Layer](../customization/knowledge-layer.md)
+by creating the OpenSearch client inside the worker process. Refer to [Knowledge Layer](../customization/knowledge-layer.md)
 for how OpenSearch compares with the LlamaIndex and Foundational RAG backends.
 
 ```{note}
@@ -101,7 +101,7 @@ aws opensearchserverless create-security-policy \
   --policy "[{\"Rules\":[{\"ResourceType\":\"collection\",\"Resource\":[\"collection/${COLLECTION}\"]},{\"ResourceType\":\"dashboard\",\"Resource\":[\"collection/${COLLECTION}\"]}],\"AllowFromPublic\":true}]"
 ```
 
-For private VPC access, replace `AllowFromPublic` with `SourceVPCEs`. See the
+For private VPC access, replace `AllowFromPublic` with `SourceVPCEs`. Refer to the
 [AOSS network policy docs](https://docs.aws.amazon.com/opensearch-service/latest/developerguide/serverless-network.html).
 
 ### 3. Create the collection

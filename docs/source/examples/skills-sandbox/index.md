@@ -10,7 +10,7 @@ profile uses Modal; AI-Q also includes an experimental OpenShell profile for a t
 
 Skills let a research agent discover task-specific instructions only when they are relevant. A skill can teach the agent a repeatable workflow, such as extracting numeric facts, normalizing a table, running calculations, and producing reusable text artifacts. The sandbox runs code-based work outside the AI-Q process. Isolation depends on the provider: Modal creates a fresh sandbox for each job, while the experimental OpenShell profile attaches jobs to one pre-provisioned shared sandbox.
 
-For more background, see the LangChain DeepAgents docs:
+For more background, refer to the LangChain DeepAgents docs:
 
 - [Deep Agents overview](https://docs.langchain.com/oss/python/deepagents/overview)
 - [DeepAgents skills](https://docs.langchain.com/oss/python/deepagents/skills)
@@ -50,7 +50,7 @@ You can also configure Modal locally with:
 modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
 ```
 
-See Modal's token configuration docs for details: [modal.config](https://modal.com/docs/reference/modal.config).
+Refer to Modal's token configuration docs for details: [modal.config](https://modal.com/docs/reference/modal.config).
 
 ## Configuration
 

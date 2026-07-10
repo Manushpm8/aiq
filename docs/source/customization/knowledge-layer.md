@@ -56,7 +56,7 @@ A pluggable abstraction for document ingestion and retrieval. Swap backends with
 - **`opensearch`** - Uses one vector index per AI-Q collection with `none`, `basic`, or SigV4 authentication.
   - Supports self-hosted OpenSearch, Amazon OpenSearch Service (`es`), and Amazon OpenSearch Serverless (`aoss`).
   - Can ingest in the local process or dispatch ingestion to Dask workers.
-  - See [Amazon OpenSearch Serverless](../deployment/aws-opensearch-serverless.md) for the AOSS/EKS deployment path.
+  - Refer to [Amazon OpenSearch Serverless](../deployment/aws-opensearch-serverless.md) for the AOSS/EKS deployment path.
 
 ---
 
@@ -165,6 +165,7 @@ functions:
 ```
 
 **OpenSearch (Self-Hosted or AWS)**
+
 ```yaml
 functions:
   knowledge_search:

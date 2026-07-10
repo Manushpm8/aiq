@@ -188,7 +188,7 @@ busy cancellation skips that scan rather than waiting on the provider. The durab
 is authoritative for artifact records and bytes. Stored `artifact.update` events provide metadata-only live and
 replayed delivery to clients, including the web UI Files tab. A rejected candidate instead emits top-level
 `artifact.warning`. List authoritative metadata with `GET /v1/jobs/async/job/{job_id}/artifacts` and fetch content with
-`GET /v1/jobs/async/job/{job_id}/artifacts/{artifact_id}/content`. See the
+`GET /v1/jobs/async/job/{job_id}/artifacts/{artifact_id}/content`. Refer to the
 [REST API](../integration/rest-api.md#durable-sandbox-artifacts) for the complete capture, authorization, retention,
 and content-serving contract.
 

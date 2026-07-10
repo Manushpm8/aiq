@@ -3,7 +3,7 @@
 This package implements the DeepAgents-backed deep-research path. The
 [Deep Researcher architecture guide](../../../../docs/source/architecture/agents/deep-researcher.md)
 is the canonical description of its runtime flow, state, middleware, and
-configuration. Keep detailed behavior there so the public and package-local
+configuration. Keep detailed behavior in the architecture guide so the public and package-local
 documentation do not diverge.
 
 ## Runtime Contract

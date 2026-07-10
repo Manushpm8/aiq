@@ -13,7 +13,7 @@ and [LangChain](https://docs.langchain.com/) libraries.
 
 **Location:** `src/aiq_agent/agents/deep_researcher/agent.py`
 
-For optional DeepAgents sandbox execution and operational notes, see
+For optional DeepAgents sandbox execution and operational notes, refer to
 [Deep Research Sandbox](./sandbox.md).
 
 ## Purpose
@@ -181,7 +181,7 @@ independently creates the `ResearchPlan` inside the deep-research workflow.
 
 The architecture is configured through `DeepResearchAgentConfig` (NeMo Agent
 Toolkit type name: `deep_research_agent`). The workflow-shaping parameters
-are summarized here; see the
+are summarized here; refer to the
 [Configuration Reference](../../customization/configuration-reference.md)
 for configuration details.
 
@@ -222,7 +222,7 @@ functions:
 ```
 
 ```{note}
-**Nemotron Super — Build Endpoint Availability:** Nemotron Super (`nvidia/nemotron-3-super-120b-a12b`) is compatible and tested with AIQ, but Build API endpoints have limited availability due to high demand (HTTP 429/503 responses). The default configs use Nemotron Super for the `researcher_llm` role. For production deployments requiring consistent throughput, self-hosting via a [Brev Launchable](https://brev.nvidia.com/launchable/deploy?launchableID=nvidia-official-nemotron-super-49b-v1) is recommended. See [Troubleshooting](../../resources/troubleshooting.md#nemotron-super--build-endpoint-availability) for details.
+**Nemotron Super — Build Endpoint Availability:** Nemotron Super (`nvidia/nemotron-3-super-120b-a12b`) is compatible and tested with AIQ, but Build API endpoints have limited availability due to high demand (HTTP 429/503 responses). The default configs use Nemotron Super for the `researcher_llm` role. For production deployments requiring consistent throughput, self-hosting via a [Brev Launchable](https://brev.nvidia.com/launchable/deploy?launchableID=nvidia-official-nemotron-super-49b-v1) is recommended. Refer to [Troubleshooting](../../resources/troubleshooting.md#nemotron-super--build-endpoint-availability) for details.
 ```
 
 ## Prompt Templates

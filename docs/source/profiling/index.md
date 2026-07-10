@@ -122,7 +122,7 @@ model and external tool API, with a best-effort phase view (Orchestrator / Plann
 
 LLM token costs alone do not capture the full picture of a research agent run:
 
-- **Search APIs are a significant cost driver.** In a typical Deep Research Bench run with 5 queries, Tavily advanced search accounts for roughly 95 calls at $0.016/call — around $1.52, or ~30% of the total run cost.
+- **Search APIs are a significant cost driver.** Measure provider call counts for each evaluation run and apply the prices in effect for that run; research fan-out can make tool usage a material share of total cost.
 - **Native phase attribution is incomplete.** NAT traces do not consistently expose a role on each LLM call, so
   the current adapter cannot produce authoritative per-role accounting for every deep-research execution path.
 - **Cached tokens are billed at a discount.** Without explicit tracking, you cannot measure cache hit rates or quantify the savings from prompt caching.
@@ -161,7 +161,7 @@ tokenomics:
       output_per_1m_tokens: 4.00
 ```
 
-You can optionally set `eval.general.output_dir` in that same file so the report’s default output path matches your eval artifacts directory (see `config_tokenomics_pricing.yml` in the bench configs).
+You can optionally set `eval.general.output_dir` in that same file so the report’s default output path matches your eval artifacts directory (refer to `config_tokenomics_pricing.yml` in the bench configs).
 
 **Model name lookup** uses exact match first, then substring match, then the `default`. A key of `"gpt-5.2"` matches a trace model name of `"azure/openai/gpt-5.2"` because the key is a substring of the full name.
 

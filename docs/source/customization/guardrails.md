@@ -19,8 +19,8 @@ are not active until that middleware reference is added to the function.
 | Boundary | Middleware | Applies To |
 | --- | --- | --- |
 | Workflow | `workflow_guardrails` | Workflow input and final assistant response; active when attached under `workflow.middleware`. |
-| Shallow researcher | `shallow_agent_guardrails` | Shallow input/output message content; active when attached under `functions.shallow_research_agent.middleware`. |
-| Deep researcher | `deep_agent_guardrails` | Deep input/output message content; the async runner selects it when `workflow_functions` targets `deep_research_agent`. |
+| Shallow researcher | `shallow_agent_guardrails` | Shallow input or output message content; active when attached under `functions.shallow_research_agent.middleware`. |
+| Deep researcher | `deep_agent_guardrails` | Deep input or output message content; the async runner selects it when `workflow_functions` targets `deep_research_agent`. |
 
 These middleware types use NAT/NeMo Guardrails for policy evaluation at AI-Q workflow and agent boundaries.
 
@@ -41,7 +41,7 @@ evaluation exceptions are not converted to a refusal; they propagate and fail th
 
 The guardrails configuration is placed in the top-level `middleware` section. Defining an entry makes that middleware
 available; attach it to the workflow or function that should be guarded. The `guardrails` block uses NAT/NeMo
-Guardrails configuration. See `configs/config_web_default_guardrails.yml` for the full field-selection paths used by
+Guardrails configuration. Refer to `configs/config_web_default_guardrails.yml` for the full field-selection paths used by
 each boundary.
 
 ```yaml
@@ -133,4 +133,4 @@ Guardrails middleware is available at these AI-Q boundaries:
 The reference profile actively guards the workflow and async deep researcher as described above. It does not enforce all
 three boundaries by default.
 
-For the complete YAML schema and general configuration conventions, see [Configuration Reference](./configuration-reference.md).
+For the complete YAML schema and general configuration conventions, refer to [Configuration Reference](./configuration-reference.md).

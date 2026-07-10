@@ -105,7 +105,7 @@ The central state model carries data through the entire workflow:
   reusable researcher worker, not as `task()` subagents. The writer is the
   normative final-synthesis stage. If `/shared/output.md` is missing, the
   runtime can defensively accept a substantive orchestrator-authored Markdown
-  report; short workflow chatter is rejected.
+  report, but rejects short workflow chatter.
 
 - **Toolkit-independent agents**: All agents receive dependencies through constructor
   injection for testability. NeMo Agent Toolkit registration is a thin layer in `register.py`
@@ -115,7 +115,7 @@ The central state model carries data through the entire workflow:
   source registry before the active research agents are constructed. Unmapped
   configured tools remain active and are absent from the router catalog.
   Routing is advisory, and `ResearchQuery` preferred and fallback tool names
-  are prompt guidance; workers remain bound to the full request-filtered set.
+  are prompt guidance, while workers remain bound to the full request-filtered set.
 
 - **Evaluation-driven defaults**: Routing and research budgets are tuned
   through benchmarks (FreshQA, Deep Research Bench) and can evolve as
@@ -125,7 +125,7 @@ The central state model carries data through the entire workflow:
   for deterministic citation checks and URL sanitization. Deep-research
   citation verification is enabled by default and configurable with
   `enable_citation_verification`; it is not an unconditional workflow stage.
-  See
+  Refer to
   [Deep Researcher -- Citation Verification](agents/deep-researcher.md#phase-5-citation-verification-post-processing)
   for details.
 

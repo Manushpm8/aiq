@@ -13,7 +13,7 @@ An NVIDIA blueprint for AI-powered deep research, built on the NeMo Agent Toolki
 
 | I want to... | Go to |
 |--------------|-------|
-| See the merged AI-Q 2.2 candidate scope | [AI-Q 2.2 Release Notes](./resources/release-notes.md) |
+| Refer to the merged AI-Q 2.2 candidate scope | [AI-Q 2.2 Release Notes](./resources/release-notes.md) |
 | Read the docs in order | [Developer Guide](./get-started/developer-guide.md) |
 | Run the blueprint quickly | [Quick Start](./get-started/quick-start.md) |
 | Understand how it works | [Architecture Overview](./architecture/overview.md) |

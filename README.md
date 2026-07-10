@@ -98,7 +98,7 @@ The checked-in default CLI and web profiles use these core components:
 
 Focused profiles can instead use [GPT-OSS-120B](https://build.nvidia.com/openai/gpt-oss-120b/modelcard)
 for deep-research orchestration, planning, and writing, or GPT-5.2 for those roles in the
-frontier-model example. See [Configuration Files](#configuration-files); there is no single
+frontier-model example. Refer to [Configuration Files](#configuration-files); there is no single
 all-features profile.
 
 ## Target Audience
@@ -228,7 +228,7 @@ Paper search supports three interchangeable providers. Set the `provider` field 
 | SerpAPI | `SERPAPI_API_KEY` | [serpapi.com](https://serpapi.com/) |
 | SearchAPI | `SEARCHAPI_API_KEY` | [searchapi.io](https://www.searchapi.io/) |
 
-See [sources/google_scholar_paper_search/README.md](sources/google_scholar_paper_search/README.md) for configuration details.
+Refer to [sources/google_scholar_paper_search/README.md](sources/google_scholar_paper_search/README.md) for configuration details.
 
 ### Set Up Environment Variables
 
@@ -315,7 +315,7 @@ For more details, refer to:
 
 ### Async Deep Research Jobs
 
-For public endpoints, SSE replay, report follow-up, and durable artifact access, see the
+For public endpoints, SSE replay, report follow-up, and durable artifact access, refer to the
 [REST API documentation](docs/source/integration/rest-api.md).
 
 ### Benchmarks

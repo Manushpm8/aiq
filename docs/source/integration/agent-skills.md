@@ -142,7 +142,7 @@ ln -s ../../skills/aiq-research .claude/skills/aiq-research
 ```
 
 The maintainer-skill symlinks are managed alongside the maintainer skill set;
-see the [maintainer skills README](https://github.com/NVIDIA-AI-Blueprints/aiq/blob/develop/.agents/skills/README.md) for how
+refer to the [maintainer skills README](https://github.com/NVIDIA-AI-Blueprints/aiq/blob/develop/.agents/skills/README.md) for how
 those are added.
 
 For a user-level install:

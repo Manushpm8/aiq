@@ -32,7 +32,7 @@ The [Intent Classifier](../architecture/agents/intent-classifier.md) automatical
 
 **Can I disable the clarifier step?**
 
-Yes. The clarifier gathers missing context or the requested output type;
+Yes. The clarifier gathers missing context or the requested output type and
 research planning starts afterward inside the deep-research workflow. Refer
 to [Human-in-the-Loop](../customization/hitl.md) for configuration options.
 You can disable the clarifier entirely or limit how many clarification

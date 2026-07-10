@@ -17,12 +17,12 @@ research queries, researcher workers execute independent queries concurrently an
 return structured notes, and a dedicated writer synthesizes the final answer. Source
 tools can also accept bounded batches of inputs. A caller's `data_sources` selection
 constrains tools mapped in the data-source registry; configured unmapped tools, including
-utilities, remain callable. See [Deep Researcher Agent](../architecture/agents/deep-researcher.md)
+utilities, remain callable. Refer to [Deep Researcher Agent](../architecture/agents/deep-researcher.md)
 and [Automatic Source Routing](../customization/tools-and-sources.md#automatic-source-routing).
 
 The clarifier still gathers missing context and the requested output shape, but it no
 longer creates or asks the user to approve a research plan. Planning is owned by the
-deep-research workflow. See [Clarifier Agent](../architecture/agents/clarifier.md).
+deep-research workflow. Refer to [Clarifier Agent](../architecture/agents/clarifier.md).
 
 The focused [`config_domain_routing_and_skills.yml`](https://github.com/NVIDIA-AI-Blueprints/aiq/blob/develop/configs/config_domain_routing_and_skills.yml)
 profile demonstrates routed research with DuckDuckGo news, Polymarket, paper search,
@@ -37,7 +37,7 @@ Conversation follow-up can now use the most recent completed report as durable c
 - A cosmetic rewrite creates a child report-edit job in the async web/API path; the parent report is unchanged.
 - A request for new evidence runs delta research with the parent report available as context.
 
-The API also exposes an explicit report-edit endpoint. See [Report Follow-up](../integration/rest-api.md#edit-a-report-report-follow-up)
+The API also exposes an explicit report-edit endpoint. Refer to [Report Follow-up](../integration/rest-api.md#edit-a-report-report-follow-up)
 for the parent/child contract, authorization behavior, and response fields.
 
 ## Skills, Sandboxes, and Durable Outputs
@@ -45,13 +45,13 @@ for the parent/child contract, authorization behavior, and response fields.
 DeepAgents code execution now uses a provider-neutral sandbox contract. Modal creates a
 fresh sandbox for each job. The experimental OpenShell profile instead attaches jobs to
 one pre-provisioned named sandbox; per-job directories reduce ordinary filename
-collisions but are not multi-tenant isolation. See [Deep Research Sandbox](../architecture/agents/sandbox.md)
+collisions but are not multi-tenant isolation. Refer to [Deep Research Sandbox](../architecture/agents/sandbox.md)
 and the [Skills and Sandbox example](../examples/skills-sandbox/index.md).
 
-Generated rich files can be harvested into durable artifact records. Metadata remains in
+Generated rich files can be harvested into durable artifact records. The metadata remains in
 the job database, while bytes use SQL by default or an opt-in S3-compatible store. The
 REST API can list metadata and stream content. With `REQUIRE_AUTH=true`, access is scoped
-to the job's owning principal; the default no-auth mode does not enforce job ownership.
+to the job's owning principal. The default no-auth mode does not enforce job ownership.
 Successful sandbox `execute` calls checkpoint manifest-declared files. Success and failure
 paths perform one idempotent final manifest-plus-directory scan before cleanup. Cancellation
 does the final scan only when the provider is idle; a busy provider is terminated without
@@ -65,21 +65,21 @@ Artifact images referenced by a report render inline in the web UI. Markdown dow
 rewrite those references to artifact content URLs, while PDF export embeds the resolved
 images. The `aiq-research` skill can download all durable artifacts or create a portable
 bundle containing `report.md` and an `artifacts/` directory with embedded artifact image
-references rewritten to local files. See [Agent Skills for Coding Harnesses](../integration/agent-skills.md#report-follow-up-and-portable-outputs).
-See [REST API](../integration/rest-api.md#durable-sandbox-artifacts) and
+references rewritten to local files. Refer to [Agent Skills for Coding Harnesses](../integration/agent-skills.md#report-follow-up-and-portable-outputs).
+Refer to [REST API](../integration/rest-api.md#durable-sandbox-artifacts) and
 [Production Artifact Storage](../deployment/production.md#artifact-storage).
 
 AI-Q also ships two consumer Agent Skills: `aiq-deploy` for selecting, starting, and
 validating a deployment, and `aiq-research` for routed chat and async research against a
 running server. The maintainer skill set has expanded with data-source, tool, release-QA,
-PR, prompt/model, and CI workflows. See [Agent Skills for Coding Harnesses](../integration/agent-skills.md).
+PR, prompt/model, and CI workflows. Refer to [Agent Skills for Coding Harnesses](../integration/agent-skills.md).
 
 ## Enterprise Sources and Policy Controls
 
-- **Per-user MCP OAuth:** A signed-in user can connect an OAuth-protected MCP source, see its status, and reconnect when the stored token is missing or expired. Jobs resolve that user's tools from a token store shared by the API and worker. See [Per-User MCP OAuth](../customization/mcp-tools.md#per-user-mcp-oauth).
-- **Guardrails:** Opt-in NeMo Guardrails middleware can evaluate selected workflow, shallow-researcher, and deep-researcher input/output boundaries. Only middleware that is attached or selected by the async runner is active. See [Guardrails](../customization/guardrails.md).
-- **Async content encryption:** Operators can opt into static-key or Vault Transit envelope encryption for final async job output and selected `artifact.update` content fields. See [Async Job Content Encryption](../deployment/content-encryption.md).
-- **Knowledge and search:** OpenSearch is a first-class knowledge backend for self-hosted OpenSearch, Amazon OpenSearch Service, and Amazon OpenSearch Serverless. Paper search adds SerpAPI and SearchAPI alongside the default Serper provider, and the routed-research profile adds DuckDuckGo news and Polymarket sources. See [Knowledge Layer](../customization/knowledge-layer.md) and [Configuration Reference](../customization/configuration-reference.md).
+- **Per-user MCP OAuth:** A signed-in user can connect an OAuth-protected MCP source, observe its status, and reconnect when the stored token is missing or expired. Jobs resolve that user's tools from a token store shared by the API and worker. Refer to [Per-User MCP OAuth](../customization/mcp-tools.md#per-user-mcp-oauth).
+- **Guardrails:** Opt-in NeMo Guardrails middleware can evaluate selected workflow, shallow-researcher, and deep-researcher input/output boundaries. Only middleware that is attached or selected by the async runner is active. Refer to [Guardrails](../customization/guardrails.md).
+- **Async content encryption:** Operators can opt into static-key or Vault Transit envelope encryption for final async job output and selected `artifact.update` content fields. Refer to [Async Job Content Encryption](../deployment/content-encryption.md).
+- **Knowledge and search:** OpenSearch is a first-class knowledge backend for self-hosted OpenSearch, Amazon OpenSearch Service, and Amazon OpenSearch Serverless. Paper search adds SerpAPI and SearchAPI alongside the default Serper provider, and the routed-research profile adds DuckDuckGo news and Polymarket sources. Refer to [Knowledge Layer](../customization/knowledge-layer.md) and [Configuration Reference](../customization/configuration-reference.md).
 
 ## Deployment and Observability
 
@@ -87,12 +87,12 @@ The repository source Helm chart now derives every namespaced resource from
 `.Release.Namespace`, so `helm install -n <namespace>` and GitOps renderers no longer fall
 back to a hardcoded `ns-aiq`. Keep Secrets, EKS Pod Identity associations, and other
 external bindings in the same selected namespace. This source-chart change does not imply
-that a 2.2 chart has been published to NGC. See [Kubernetes (Helm)](../deployment/kubernetes.md).
+that a 2.2 chart has been published to NGC. Refer to [Kubernetes (Helm)](../deployment/kubernetes.md).
 
 NAT-exported async-job traces now preserve the configured workflow, task or research-batch,
 named-agent, and model/tool hierarchy. Parallel researcher runs remain distinct children of
 their batch span. Structural agent spans carry identity and error-type metadata without
-copying LangGraph input/output state. See [Observability](../deployment/observability.md#async-deep-research-trace-hierarchy).
+copying LangGraph input/output state. Refer to [Observability](../deployment/observability.md#async-deep-research-trace-hierarchy).
 
 ## UX, Reliability, and Contributor Workflow
 

@@ -46,7 +46,7 @@ Each captured file emits a metadata-only `artifact.update` event. Stored events 
 the Files tab during both live execution and replay; file bytes remain behind the
 job-scoped artifact content endpoint. Rejected candidates emit `artifact.warning`.
 
-For configuration variables and examples, see [Docker Compose](../../deployment/docker-compose.md#artifact-storage)
+For configuration variables and examples, refer to [Docker Compose](../../deployment/docker-compose.md#artifact-storage)
 and [Production Considerations](../../deployment/production.md#artifact-storage).
 
 ## Operational Notes
