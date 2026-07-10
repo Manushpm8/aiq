@@ -125,7 +125,7 @@ LLM token costs alone do not capture the full picture of a research agent run:
 - **Search APIs are a significant cost driver.** Measure provider call counts for each evaluation run and apply the prices in effect for that run; research fan-out can make tool usage a material share of total cost.
 - **Native phase attribution is incomplete.** NAT traces do not consistently expose a role on each LLM call, so
   the current adapter cannot produce authoritative per-role accounting for every deep-research execution path.
-- **Cached tokens are billed at a discount.** Without explicit tracking, you cannot measure cache hit rates or quantify the savings from prompt caching.
+- **Cached tokens may be billed at a discount.** Without explicit tracking, you cannot measure cache hit rates or quantify provider-specific savings from prompt caching.
 
 The tokenomics report separately tracks per-tool API charges and reports cache savings alongside raw token costs.
 It also infers phase buckets from task timing windows; treat those buckets as directional because the adapter

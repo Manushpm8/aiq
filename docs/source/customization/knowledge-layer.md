@@ -178,15 +178,24 @@ functions:
     opensearch_aws_region: ${AWS_REGION:-us-east-1}
     opensearch_aws_service: ${OPENSEARCH_AWS_SERVICE:-aoss}
     opensearch_index_prefix: ${OPENSEARCH_INDEX_PREFIX:-aiq}
+    opensearch_embedding_dim: ${OPENSEARCH_EMBEDDING_DIM:-2048}
     opensearch_ingestion_mode: ${OPENSEARCH_INGESTION_MODE:-auto}
     opensearch_dask_scheduler_address: ${NAT_DASK_SCHEDULER_ADDRESS:-}
     embed_model: ${AIQ_EMBED_MODEL:-nvidia/llama-nemotron-embed-vl-1b-v2}
     embed_base_url: ${AIQ_EMBED_BASE_URL:-https://integrate.api.nvidia.com/v1}
 ```
 
-Use `opensearch_auth_type: basic` with `OPENSEARCH_USERNAME` and `OPENSEARCH_PASSWORD` for basic authentication. For
-AWS, use `sigv4` and set `opensearch_aws_service` to `es` or `aoss`. The embedding model's output dimension must match
-`opensearch_embedding_dim` (default `2048`). The full shipped profile is
+Use `opensearch_auth_type: none` only with a protected local development endpoint. Configure `basic` or `sigv4`
+authentication for every remote, shared, or production OpenSearch deployment. For basic authentication, set
+`OPENSEARCH_USERNAME` and `OPENSEARCH_PASSWORD`. For AWS, use `sigv4` and set `opensearch_aws_service` to `es` or
+`aoss`.
+
+The embedding model's output dimension must match `opensearch_embedding_dim` (environment variable
+`OPENSEARCH_EMBEDDING_DIM`, default `2048`) before the collection index is created. For example, if a test embedding
+response contains 2,048 values, keep the default; if it contains 1,024 values, set
+`opensearch_embedding_dim: 1024` or `OPENSEARCH_EMBEDDING_DIM=1024` before creating the collection. Use a new
+collection/index after changing dimensions because an existing `knn_vector` mapping cannot change its dimension.
+The full shipped profile is
 [`configs/config_web_opensearch.yml`](../../../configs/config_web_opensearch.yml).
 
 OpenSearch ingestion is text-only: it extracts text from PDF, DOCX, PPTX, and supported plain-text formats, but does not
@@ -204,6 +213,7 @@ All options below can be overridden via environment variables:
 | **Embedding** | | |
 | `AIQ_EMBED_MODEL` | `nvidia/llama-nemotron-embed-vl-1b-v2` | NVIDIA embedding model |
 | `AIQ_EMBED_BASE_URL` | `https://integrate.api.nvidia.com/v1` | Embedding API base URL — override for local NIM |
+| `OPENSEARCH_EMBEDDING_DIM` | `2048` | OpenSearch vector dimension; must equal the selected embedding model's output length before index creation |
 | **Extraction Flags** | | |
 | `AIQ_EXTRACT_TABLES` | `false` | Extract tables from PDFs as markdown |
 | `AIQ_EXTRACT_IMAGES` | `false` | Extract and caption images with VLM |
