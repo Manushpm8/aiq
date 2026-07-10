@@ -40,7 +40,7 @@ and does not override `-n`. The published NGC instructions below remain pinned t
 - `kubectl` configured with cluster access
 - `helm` v3.x installed
 - NGC API key (`NGC_API_KEY` environment variable)
-- Required API keys (see [Secrets](#secrets) below)
+- Required API keys (refer to [Secrets](#secrets) below)
 
 ## Install from NGC Helm Repository
 
@@ -290,7 +290,7 @@ Configure `MCP_GDRIVE_URL`, `AIQ_PUBLIC_URL`, and any OAuth client credentials r
 
 ## FRAG Integration
 
-To use the Foundational RAG (FRAG) config, you need a running NVIDIA RAG Blueprint deployment. See the [RAG Blueprint Helm deployment guide](https://github.com/NVIDIA-AI-Blueprints/rag/blob/develop/docs/deploy-helm.md) for setup instructions.
+To use the Foundational RAG (FRAG) config, you need a running NVIDIA RAG Blueprint deployment. Refer to the [RAG Blueprint Helm deployment guide](https://github.com/NVIDIA-AI-Blueprints/rag/blob/develop/docs/deploy-helm.md) for setup instructions.
 
 ### Same-cluster RAG connection
 
@@ -412,4 +412,4 @@ kubectl logs -n ns-aiq <backend-pod> -c db-init
 
 ## Source Chart Deployment
 
-For deploying from the cloned repository (building from source charts, local images, NGC images), see the [deployment-k8s README](deployment-k8s/README.md).
+For deploying from the cloned repository (building from source charts, local images, NGC images), refer to the [deployment-k8s README](deployment-k8s/README.md).

@@ -18,7 +18,7 @@ Release v2.2.0 (Unreleased)
 
 - DeepAgents execution uses a provider-neutral sandbox contract: Modal is fresh per job, while the experimental OpenShell profile uses one shared, pre-provisioned sandbox and is not a multi-tenant isolation boundary
 - Opt-in durable artifact capture checkpoints manifest-declared files after successful sandbox `execute` calls, performs one final manifest-plus-directory scan on success/failure, and preserves earlier checkpoints without delaying cancellation when the provider is busy
-- Captured files store metadata in SQL and bytes in SQL or S3-compatible storage, emit metadata-only `artifact.update` events for live and replayed Files-tab access, and remain available through authenticated list/content endpoints
+- Captured files store metadata in SQL and bytes in SQL or S3-compatible storage, emit metadata-only `artifact.update` events for live and replayed Files-tab access, and remain available through job-scoped list/content endpoints that enforce ownership when `REQUIRE_AUTH=true`
 - Opt-in NeMo Guardrails middleware covers selected workflow and agent input/output boundaries; defining middleware does not activate every boundary
 - Opt-in content encryption protects final async output and selected artifact event content only; it is off by default, forward-only, and does not encrypt checkpoints or most job/event metadata
 - Summary Store database logging masks URL passwords and removes query parameters so credentials and query-string secrets are not written to initialization or lifecycle logs

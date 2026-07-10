@@ -2,7 +2,7 @@
 
 Deploy AI-Q from the cloned repository using the local Helm chart.
 
-> **Looking to install from the NGC Helm repository?** See the [Helm README](../README.md#install-from-ngc-helm-repository) instead.
+> **Looking to install from the NGC Helm repository?** Refer to the [Helm README](../README.md#install-from-ngc-helm-repository) instead.
 
 ## Prerequisites
 
@@ -108,7 +108,7 @@ kubectl delete namespace ns-aiq
 
 ## Troubleshooting
 
-See the [Helm README — Troubleshooting](../README.md#troubleshooting) for common issues (pod status, logs, image pull errors, FRAG connection issues).
+Refer to the [Helm README — Troubleshooting](../README.md#troubleshooting) for common issues (pod status, logs, image pull errors, FRAG connection issues).
 
 ---
 

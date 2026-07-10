@@ -128,8 +128,9 @@ LLM token costs alone do not capture the full picture of a research agent run:
 - **Cached tokens are billed at a discount.** Without explicit tracking, you cannot measure cache hit rates or quantify the savings from prompt caching.
 
 The tokenomics report separately tracks per-tool API charges and reports cache savings alongside raw token costs.
-It also infers phase buckets from the task timing windows that the current adapter recognizes; treat those buckets
-as directional because unrecognized subagent work is assigned to the orchestrator bucket.
+It also infers phase buckets from task timing windows; treat those buckets as directional because the adapter
+collapses non-planner task subagents into the researcher bucket and assigns calls outside task windows to the
+orchestrator bucket.
 
 ### Configuring Pricing
 
@@ -202,7 +203,7 @@ Use this tab for a quick health check: if tool API cost is comparable to LLM cos
 | Chart | What it shows |
 |-------|---------------|
 | Cost Split by Model | Donut chart of budget allocation across models. |
-| Cost by Phase | Best-effort Orchestrator / Planner / Researcher buckets. The Orchestrator bucket can include unrecognized subagent calls; do not read it as role-exclusive accounting. |
+| Cost by Phase | Best-effort Orchestrator / Planner / Researcher buckets. The Researcher bucket can include source-router and writer task calls, while the Orchestrator bucket can include direct researcher calls; do not read either as role-exclusive accounting. |
 | Tool API Cost by Tool | Per-tool total cost and call count. Shown as a call-count bar when all tool costs are $0 (pricing not yet configured). |
 | Per-Query Cost Distribution | Histogram of query costs. Hidden when fewer than 10 queries are available. A long right tail means a few hard queries are inflating the average. |
 | Cost by Phase per Query | Stacked best-effort phase buckets per query. Use this to find outliers, then inspect the trace before attributing a spike to a role. |
@@ -223,7 +224,7 @@ The most detailed tab. All statistics are over individual LLM call observations 
 | Throughput (TPS by model) | Low TPS with small OSL = network overhead, not slow generation. |
 | Token Budget (cache breakdown) | Green = cached (cheaper); grey = uncached; blue = completion. Maximize green. |
 | ISL vs Latency scatter | Diagonal trend = prompt-bound; flat cloud = compute-bound. |
-| Token Mix by Phase | Token and cache mix across best-effort phase buckets; unrecognized subagent calls appear as orchestrator. |
+| Token Mix by Phase | Token and cache mix across best-effort phase buckets. Source-router and writer task calls can appear as researcher, while direct researcher calls can appear as orchestrator. |
 | NOVA-Predicted vs Actual OSL | Pre-call output length estimates vs actual. Hidden when estimates are post-hoc filled (trivially perfect, not informative). |
 
 #### Efficiency
@@ -241,15 +242,17 @@ Full per-query table: cost, ISL, OSL, cached tokens, ISL:OSL ratio, LLM call cou
 ### Subagent Phase Attribution
 
 The 2.2 Deep Research Agent has an orchestrator, an optional source router, a planner, parallel researcher workers,
-and a writer. The current adapter in `src/aiq_agent/tokenomics/nat_adapter.py` recognizes a `task` timing window
-only when its `subagent_type` is `planner-agent` or `researcher-agent`. It maps an `LLM_END` to a recognized window
-using the call's completion timestamp; calls outside those windows fall into `orchestrator-phase`.
+and a writer. The current adapter in `src/aiq_agent/tokenomics/nat_adapter.py` builds timing windows for `task`
+invocations whose `subagent_type` it can parse. It maps `planner-agent` windows to `planner-phase` and every other
+parsed task subagent to `researcher-phase`. It associates an `LLM_END` with a window using the call's completion
+timestamp; calls outside task windows fall into `orchestrator-phase`.
 
-This does not align completely with the 2.2 runtime. The planner is delegated through `task()`, but researcher
-workers are invoked directly by `run_research_batch` rather than through individual `task()` calls. The optional
-`source-router-agent` and `writer-agent` are delegated through `task()`, but their names are not recognized by the
-adapter. Their LLM calls, and the current researcher-worker calls, can therefore appear in `orchestrator-phase`.
-The bucket is partly an **unattributed/default bucket**, not proof that the orchestrator model performed the work.
+This does not align completely with the 2.2 runtime. The optional `source-router-agent`, `planner-agent`, and
+`writer-agent` are delegated through `task()`, so source-router and writer calls are normally folded into
+`researcher-phase`. Researcher workers are invoked directly by `run_research_batch` rather than through individual
+`task()` calls, so their calls can instead appear in `orchestrator-phase`. The researcher bucket is therefore a
+mixed task-subagent bucket, and the orchestrator bucket is partly an **unattributed/default bucket**; neither proves
+which role's model performed the work.
 
 Phase charts are consequently best-effort diagnostics, not correct per-role cost accounting for 2.2. Overall
 token and cost totals remain useful independently of that distribution, subject to the completeness of the trace
