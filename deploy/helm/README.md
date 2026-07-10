@@ -31,8 +31,8 @@ All examples use `ns-aiq`. The repository source chart derives every namespaced
 resource from Helm's `.Release.Namespace`, supplied with `-n`; use a different namespace
 consistently across Helm, Secrets, `kubectl`, and external identity bindings. The
 `aiq.namespace.create` value controls whether the source chart renders a Namespace object
-and does not override `-n`. The published NGC instructions below remain pinned to chart
-2.0.0 and should not be read as a published 2.2 artifact.
+and does not override `-n`. The NGC instructions below install published chart 2.0.0. Use
+the source chart when you need behavior from the checked-out repository.
 
 ## Prerequisites
 

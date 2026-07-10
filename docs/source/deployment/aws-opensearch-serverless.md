@@ -13,8 +13,8 @@ for how OpenSearch compares with the LlamaIndex and Foundational RAG backends.
 ```{note}
 **Migrating from AI-Q v1.0.** On v1.0, OpenSearch support shipped through a custom Docker image
 built from [`awslabs/ai-on-eks`](https://github.com/awslabs/ai-on-eks) via `./deploy.sh build`. In
-the AI-Q 2.2 candidate on `develop`, OpenSearch is a built-in knowledge backend selected through
-workflow YAML
+the current implementation, OpenSearch is now a built-in knowledge backend selected through workflow
+YAML
 (`backend: opensearch`). You no longer need to maintain a custom image build pipeline.
 ```
 

@@ -228,9 +228,8 @@ functions:
 
 ### `knowledge_retrieval`
 
-Semantic search over ingested documents. The AI-Q 2.2 candidate on `develop` supports three backends: LlamaIndex
-(local ChromaDB), Foundational RAG (hosted NVIDIA RAG Blueprint), and OpenSearch (self-hosted OpenSearch or Amazon
-OpenSearch Serverless).
+Semantic search over ingested documents. AI-Q supports three backends: LlamaIndex (local ChromaDB), Foundational RAG
+(hosted NVIDIA RAG Blueprint), and OpenSearch (self-hosted OpenSearch or Amazon OpenSearch Serverless).
 
 ```yaml
 functions:
@@ -579,7 +578,7 @@ workflow:
 ## Provided Config Files
 
 The repository includes nine top-level workflow configurations. They are focused reference profiles, not cumulative
-layers, and no single profile enables every 2.2 capability. Start from the profile closest to the deployment and merge
+layers, and no single profile enables every capability. Start from the profile closest to the deployment and merge
 only the additional sections you need.
 
 | File | Mode | Enabled behavior and opt-ins |

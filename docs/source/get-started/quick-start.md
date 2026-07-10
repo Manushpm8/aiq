@@ -137,7 +137,7 @@ To view detailed agent execution logs (tool calls, routing decisions, LLM intera
 
 Now that you have the system running, explore these topics:
 
-- **[Review the unreleased 2.2 changelog](../resources/changelog.md)** -- Compare the candidate with the latest stable release and choose among the focused [configuration profiles](../customization/configuration-reference.md#provided-config-files)
+- **[Review recent changes](../resources/changelog.md)** -- See what has changed and choose among the focused [configuration profiles](../customization/configuration-reference.md#provided-config-files)
 - **[Agent Skills](../integration/agent-skills.md)** -- Deploy and call AI-Q from a compatible coding harness
 - **[Architecture Overview](../architecture/overview.md)** -- Understand how the orchestrator, shallow researcher, and deep researcher work together
 - **[Customization](../customization/index.md)** -- Swap models, configure tools, adjust prompts, and tune agent behavior
