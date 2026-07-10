@@ -24,7 +24,7 @@ limitations under the License.
 
 ## Table of Contents
 - [Overview](#overview)
-- [What's New in 2.2](#whats-new-in-22)
+- [AI-Q 2.2 Preview: What's New](#ai-q-22-preview-whats-new)
 - [Software Components](#software-components)
 - [Target Audience](#target-audience)
 - [Prerequisites](#prerequisites)
@@ -57,7 +57,13 @@ The NVIDIA AI-Q Blueprint is an enterprise-grade research agent built on the [NV
 <img src="./docs/assets/AIQ-arch-light.png" alt="AI-Q Architecture" width="800">
 </p>
 
-**Key features:**
+> **Release status:** [`v2.1.0`](https://github.com/NVIDIA-AI-Blueprints/aiq/releases/tag/v2.1.0)
+> is the latest stable AI-Q release. This README describes the `develop` branch, which contains
+> candidate work for AI-Q 2.2. The published [`v2.2.0-rc1`](https://github.com/NVIDIA-AI-Blueprints/aiq/releases/tag/v2.2.0-rc1)
+> is a prerelease snapshot, not the final 2.2 release. The candidate will be stabilized on
+> `release/2.2` before `v2.2.0` is published, and details can change until then.
+
+**Key features on `develop`:**
 
 - **Orchestration node** — One node classifies intent (meta vs. research), produces meta responses (for example, greetings, capabilities), and sets research depth (shallow vs. deep).
 - **Shallow research** — Bounded, faster researcher with tool-calling and source citation.
@@ -76,11 +82,30 @@ The NVIDIA AI-Q Blueprint is an enterprise-grade research agent built on the [NV
 - **Frontend options** — Run through CLI, web UI, or async jobs. Refer to [Getting started](#getting-started) and [Ways to run the agents](#ways-to-run-the-agents).
 - **Deployment options** - Deployment assets for [Docker Compose](deploy/compose/) and [Helm](deploy/helm/deployment-k8s/); the repository source chart honors the Helm release namespace for every namespaced resource.
 
-## What's New in 2.2
+## AI-Q 2.2 Preview: What's New
 
-AI-Q 2.2 is not released yet. The [AI-Q 2.2 Release Notes](docs/source/resources/release-notes.md)
-describe the capabilities currently merged on `develop`, the focused configuration profiles,
-upgrade guidance, and the boundaries that are not part of this candidate.
+Relative to the latest stable release, `v2.1.0`, the current 2.2 candidate adds:
+
+- **Structured, concurrent deep research** — Advisory source routing, structured planning,
+  concurrent researcher workers, bounded source-tool batching, and a dedicated writer replace
+  the earlier three-role flow and move plan ownership out of the clarifier.
+- **Work that continues from a completed report** — Users can ask questions against an existing
+  report, create child-job rewrites, or run delta research with the parent report as context.
+- **Portable skills, sandboxes, and durable files** — Provider-neutral sandbox execution,
+  the new `aiq-deploy` skill, expanded `aiq-research` workflows, opt-in artifact capture, SQL or
+  S3-compatible storage, and live or replayed Files-tab access turn generated files into durable
+  outputs.
+- **Enterprise data and policy controls** — OpenSearch joins the knowledge backends; per-user MCP
+  OAuth, opt-in NeMo Guardrails middleware, and narrowly scoped async-content encryption add
+  deployment controls without making them universal defaults.
+- **Operations and user experience** — Async traces preserve the agent hierarchy, the source Helm
+  chart honors the selected release namespace, and the UI improves concurrent-research activity,
+  session recovery, and WebSocket reliability.
+
+This is candidate scope merged on `develop`, not a final release commitment. It will be stabilized
+on `release/2.2` before the final `v2.2.0` release. The [unreleased 2.2 changelog](CHANGELOG.md)
+tracks the detailed candidate scope; the linked feature docs describe configuration and current
+limitations.
 
 
 ## Software Components
@@ -402,6 +427,10 @@ For development, contribution, and documentation, refer to:
 - **[Changelog](docs/source/resources/changelog.md)**: Version history and changes
 
 ## Roadmap
+
+The checkboxes below track implementation on `develop`; a checked item does not mean the capability
+is available in the latest stable release. The completed items targeting 2.2 remain candidate scope
+until the final `v2.2.0` release.
 
 - [x] **[NeMo Guardrails](docs/source/customization/guardrails.md) Integration:** Opt-in middleware for selected workflow, shallow-researcher, and deep-researcher boundaries.
 - [ ] **[NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo) Integration:** Reduce latency via priority scheduling at scale.

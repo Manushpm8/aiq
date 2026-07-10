@@ -228,8 +228,9 @@ functions:
 
 ### `knowledge_retrieval`
 
-Semantic search over ingested documents. AI-Q 2.2 supports three backends: LlamaIndex (local ChromaDB), Foundational
-RAG (hosted NVIDIA RAG Blueprint), and OpenSearch (self-hosted OpenSearch or Amazon OpenSearch Serverless).
+Semantic search over ingested documents. The AI-Q 2.2 candidate on `develop` supports three backends: LlamaIndex
+(local ChromaDB), Foundational RAG (hosted NVIDIA RAG Blueprint), and OpenSearch (self-hosted OpenSearch or Amazon
+OpenSearch Serverless).
 
 ```yaml
 functions:

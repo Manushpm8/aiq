@@ -241,23 +241,24 @@ Full per-query table: cost, ISL, OSL, cached tokens, ISL:OSL ratio, LLM call cou
 
 ### Subagent Phase Attribution
 
-The 2.2 Deep Research Agent has an orchestrator, an optional source router, a planner, parallel researcher workers,
-and a writer. The current adapter in `src/aiq_agent/tokenomics/nat_adapter.py` builds timing windows for `task`
+The Deep Research Agent on `develop` (targeting 2.2) has an orchestrator, an optional source router, a planner,
+parallel researcher workers, and a writer. The current adapter in `src/aiq_agent/tokenomics/nat_adapter.py` builds
+timing windows for `task`
 invocations whose `subagent_type` it can parse. It maps `planner-agent` windows to `planner-phase` and every other
 parsed task subagent to `researcher-phase`. It associates an `LLM_END` with a window using the call's completion
 timestamp; calls outside task windows fall into `orchestrator-phase`.
 
-This does not align completely with the 2.2 runtime. The optional `source-router-agent`, `planner-agent`, and
+This does not align completely with the candidate runtime. The optional `source-router-agent`, `planner-agent`, and
 `writer-agent` are delegated through `task()`, so source-router and writer calls are normally folded into
 `researcher-phase`. Researcher workers are invoked directly by `run_research_batch` rather than through individual
 `task()` calls, so their calls can instead appear in `orchestrator-phase`. The researcher bucket is therefore a
 mixed task-subagent bucket, and the orchestrator bucket is partly an **unattributed/default bucket**; neither proves
 which role's model performed the work.
 
-Phase charts are consequently best-effort diagnostics, not correct per-role cost accounting for 2.2. Overall
-token and cost totals remain useful independently of that distribution, subject to the completeness of the trace
-and pricing configuration. Native role metadata on each LLM step, or adapter support for every current execution
-path, is required before the phase split can be treated as authoritative.
+Phase charts are consequently best-effort diagnostics, not correct per-role cost accounting for the 2.2 candidate.
+Overall token and cost totals remain useful independently of that distribution, subject to the completeness of the
+trace and pricing configuration. Native role metadata on each LLM step, or adapter support for every current
+execution path, is required before the phase split can be treated as authoritative.
 
 ### Python API
 

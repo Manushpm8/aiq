@@ -13,7 +13,7 @@ An NVIDIA blueprint for AI-powered deep research, built on the NeMo Agent Toolki
 
 | I want to... | Go to |
 |--------------|-------|
-| Refer to the merged AI-Q 2.2 candidate scope | [AI-Q 2.2 Release Notes](./resources/release-notes.md) |
+| Preview the merged AI-Q 2.2 candidate scope | [Changelog](./resources/changelog.md) |
 | Read the docs in order | [Developer Guide](./get-started/developer-guide.md) |
 | Run the blueprint quickly | [Quick Start](./get-started/quick-start.md) |
 | Understand how it works | [Architecture Overview](./architecture/overview.md) |
@@ -22,10 +22,13 @@ An NVIDIA blueprint for AI-powered deep research, built on the NeMo Agent Toolki
 | Deploy to production | [Deployment](./deployment/index.md) |
 | Evaluate quality | [Evaluation](./evaluation/index.md) |
 
-## What's New in 2.2
+## AI-Q 2.2 Preview: What's New
 
-AI-Q 2.2 is still unreleased. Read the [AI-Q 2.2 Release Notes](./resources/release-notes.md)
-for the merged release-candidate capabilities, configuration guidance, and current limitations.
+AI-Q `v2.1.0` remains the latest stable release. These docs track `develop`, so they also describe
+candidate features for AI-Q 2.2. The published `v2.2.0-rc1` is a prerelease snapshot, not the final
+release; the candidate will be stabilized on `release/2.2` before `v2.2.0` is published. The
+[changelog](./resources/changelog.md) tracks the detailed candidate scope, while the feature docs
+provide configuration guidance and current limitations.
 
 ```{toctree}
 :hidden:
@@ -134,7 +137,6 @@ Knowledge Layer SDK <./reference/knowledge-layer-sdk.md>
 :hidden:
 :caption: Resources
 
-AI-Q 2.2 Release Notes <./resources/release-notes.md>
 Changelog <./resources/changelog.md>
 Troubleshooting <./resources/troubleshooting.md>
 FAQ <./resources/faq.md>

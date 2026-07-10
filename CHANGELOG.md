@@ -1,6 +1,9 @@
 # Change Log
 
-Release v2.2.0 (Unreleased)
+Unreleased changes targeting AI-Q v2.2.0
+
+These entries track candidate work merged to `develop`. AI-Q `v2.1.0` remains the latest stable
+release; the candidate will be stabilized on `release/2.2` before the final `v2.2.0` release.
 
 **Research and reports**
 
