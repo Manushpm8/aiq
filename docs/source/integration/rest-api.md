@@ -285,9 +285,25 @@ curl http://localhost:8000/v1/jobs/async/job/{job_id}/state
 Durable artifacts are generated files such as charts, CSVs, notebooks, or documents
 harvested from a configured deep-research sandbox. Capture is opt-in: the deep researcher
 must have a sandbox and `artifact_capture.enabled: true`, and the API/worker must be able
-to open the artifact store. The final harvest on the successful report path is
-best-effort; sandbox execution alone does not guarantee that every generated file is
-persisted.
+to open the artifact store. Successful `execute` calls checkpoint manifest-declared files.
+Success and failure paths perform one idempotent final manifest-plus-directory scan before
+cleanup. Cancellation performs that scan only when the provider is idle; a busy provider
+is terminated without waiting and artifacts from earlier checkpoints remain durable.
+Capture remains best-effort, so sandbox execution alone does not guarantee that every
+generated file is persisted.
+
+#### Live and Replayed File Events
+
+After storing a file, the worker emits a metadata-only `artifact.update` event with nested
+`data.type: "file"`. It includes the artifact and job IDs, display filename, kind, MIME type,
+size, digest, optional title/caption/inline metadata, and the job-scoped content URL. It does
+not contain file bytes, the storage URI, or the sandbox path. These stored events drive both
+live delivery and replay into the web UI Files tab, whose **Open file** action uses the
+job-scoped content endpoint below. When `artifact_id` is present, the UI derives that
+same-origin path from the current job and artifact IDs instead of trusting an arbitrary
+event URL. Rejected candidates emit `artifact.warning` with
+`data.path` and `data.reason` instead. See [Data Flow](../architecture/data-flow.md#event-structure)
+for the canonical payload.
 
 #### List Artifact Metadata
 
@@ -401,7 +417,8 @@ Events streamed during job execution. Refer to the [Data Flow](../architecture/d
 | `workflow.start` / `workflow.end` | Workflow lifecycle boundaries |
 | `llm.start` / `llm.chunk` / `llm.end` | LLM inference progress. `llm.chunk` contains streaming token content |
 | `tool.start` / `tool.end` | Tool invocation lifecycle. Includes tool name, input, and output |
-| `artifact.update` | Structured updates: todos, files, citations (`citation_source`, `citation_use`), output content |
+| `artifact.update` | Structured updates for todos, citations, output content, legacy text files, and durable generated-file metadata with a job-scoped content URL |
+| `artifact.warning` | Durable file candidate was rejected; contains its sandbox path and rejection reason, but no file bytes |
 
 ## Agent Registration
 

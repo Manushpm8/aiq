@@ -6,8 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 # AI-Q 2.2 Release Notes (Unreleased)
 
 These notes describe the release-candidate scope that is merged on the `develop`
-branch. AI-Q 2.2 has not been published: there is no final `v2.2.0` tag, container
-image, or Helm chart for this candidate yet.
+branch. AI-Q 2.2 has not been published: there is no final `v2.2.0` tag, published
+container image, or published Helm chart for this candidate yet.
 
 ## Research That Routes, Scales, and Finishes Coherently
 
@@ -52,6 +52,15 @@ Generated rich files can be harvested into durable artifact records. Metadata re
 the job database, while bytes use SQL by default or an opt-in S3-compatible store. The
 REST API can list metadata and stream content. With `REQUIRE_AUTH=true`, access is scoped
 to the job's owning principal; the default no-auth mode does not enforce job ownership.
+Successful sandbox `execute` calls checkpoint manifest-declared files. Success and failure
+paths perform one idempotent final manifest-plus-directory scan before cleanup. Cancellation
+does the final scan only when the provider is idle; a busy provider is terminated without
+waiting, while artifacts from earlier checkpoints remain durable.
+
+Each captured file emits a metadata-only `artifact.update` event. The web UI consumes those
+events both live and during replay, lists the files with MIME type and size, and opens bytes
+through the job-scoped artifact content endpoint. File bytes and storage credentials are not
+embedded in the event.
 Artifact images referenced by a report render inline in the web UI. Markdown downloads
 rewrite those references to artifact content URLs, while PDF export embeds the resolved
 images. The `aiq-research` skill can download all durable artifacts or create a portable
@@ -71,6 +80,19 @@ PR, prompt/model, and CI workflows. See [Agent Skills for Coding Harnesses](../i
 - **Guardrails:** Opt-in NeMo Guardrails middleware can evaluate selected workflow, shallow-researcher, and deep-researcher input/output boundaries. Only middleware that is attached or selected by the async runner is active. See [Guardrails](../customization/guardrails.md).
 - **Async content encryption:** Operators can opt into static-key or Vault Transit envelope encryption for final async job output and selected `artifact.update` content fields. See [Async Job Content Encryption](../deployment/content-encryption.md).
 - **Knowledge and search:** OpenSearch is a first-class knowledge backend for self-hosted OpenSearch, Amazon OpenSearch Service, and Amazon OpenSearch Serverless. Paper search adds SerpAPI and SearchAPI alongside the default Serper provider, and the routed-research profile adds DuckDuckGo news and Polymarket sources. See [Knowledge Layer](../customization/knowledge-layer.md) and [Configuration Reference](../customization/configuration-reference.md).
+
+## Deployment and Observability
+
+The repository source Helm chart now derives every namespaced resource from
+`.Release.Namespace`, so `helm install -n <namespace>` and GitOps renderers no longer fall
+back to a hardcoded `ns-aiq`. Keep Secrets, EKS Pod Identity associations, and other
+external bindings in the same selected namespace. This source-chart change does not imply
+that a 2.2 chart has been published to NGC. See [Kubernetes (Helm)](../deployment/kubernetes.md).
+
+NAT-exported async-job traces now preserve the configured workflow, task or research-batch,
+named-agent, and model/tool hierarchy. Parallel researcher runs remain distinct children of
+their batch span. Structural agent spans carry identity and error-type metadata without
+copying LangGraph input/output state. See [Observability](../deployment/observability.md#async-deep-research-trace-hierarchy).
 
 ## UX, Reliability, and Contributor Workflow
 
@@ -95,15 +117,16 @@ and reusable maintainer skills. AI-Q now pins NeMo Agent Toolkit 1.8.0.
 4. When enabling encryption, use a new or empty job history, wait for old plaintext jobs
    to expire, or accept the documented forward-only read behavior. Keep the selected key
    identity stable while encrypted jobs are retained.
+5. For source-chart deployments, treat `helm ... -n <namespace>` as authoritative and create
+   application Secrets and external identity bindings in that same namespace.
 
 ## Current Limitations
 
 - No checked-in configuration enables every 2.2 capability. In particular, the routed skills profile, Guardrails profile, MCP OAuth example, OpenSearch profile, and OpenShell example are separate starting points.
 - Modal creates a fresh sandbox per job. The experimental OpenShell configuration uses a shared, pre-created sandbox and must not be treated as isolation between mutually untrusted jobs.
-- Durable artifact capture is disabled by default. It requires a sandbox, `artifact_capture.enabled: true`, and a usable artifact store. Final harvesting on the successful report path is best-effort; adding a sandbox does not guarantee that every generated file is persisted or embedded.
+- Durable artifact capture is disabled by default. It requires a sandbox, `artifact_capture.enabled: true`, and a usable artifact store. Checkpoints run only after successful `execute` calls, terminal harvesting remains best-effort, and a busy cancellation skips the final scan; adding a sandbox does not guarantee that every generated file is persisted or embedded.
 - The per-user MCP UI/API surface supports status, connect, callback, and reconnect. It does not expose disconnect, and the async worker does not refresh an expired token in place; the user reconnects before retrying the job.
 - Content encryption is off by default, forward-only after enablement, and intentionally narrow. It does not encrypt checkpoints, errors, citations, todos, most event metadata, summaries, or historical plaintext final reports.
 
 Features that are not merged into `develop` are not part of this candidate. These notes
-do not claim an AI-Q public MCP server, per-job OpenShell isolation, an artifact Files-tab
-or checkpoint lifecycle, a Helm namespace fix, or a new trace hierarchy.
+do not claim an AI-Q public MCP server or per-job OpenShell isolation and policy attestation.

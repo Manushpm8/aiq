@@ -17,10 +17,16 @@ Release v2.2.0 (Unreleased)
 **Sandboxes, artifacts, and policy**
 
 - DeepAgents execution uses a provider-neutral sandbox contract: Modal is fresh per job, while the experimental OpenShell profile uses one shared, pre-provisioned sandbox and is not a multi-tenant isolation boundary
-- Opt-in durable artifact capture stores metadata in SQL and bytes in SQL or S3-compatible storage, with authenticated list/content endpoints; successful-run final harvesting remains best-effort
+- Opt-in durable artifact capture checkpoints manifest-declared files after successful sandbox `execute` calls, performs one final manifest-plus-directory scan on success/failure, and preserves earlier checkpoints without delaying cancellation when the provider is busy
+- Captured files store metadata in SQL and bytes in SQL or S3-compatible storage, emit metadata-only `artifact.update` events for live and replayed Files-tab access, and remain available through authenticated list/content endpoints
 - Opt-in NeMo Guardrails middleware covers selected workflow and agent input/output boundaries; defining middleware does not activate every boundary
 - Opt-in content encryption protects final async output and selected artifact event content only; it is off by default, forward-only, and does not encrypt checkpoints or most job/event metadata
 - Summary Store database logging masks URL passwords and removes query parameters so credentials and query-string secrets are not written to initialization or lifecycle logs
+
+**Deployment and observability**
+
+- The repository source Helm chart honors `helm install -n <namespace>` for every namespaced resource, including GitOps-rendered deployments; chart metadata advances to `aiq2-web` 2.1.1 with the `aiq` 0.0.5 dependency
+- NAT-exported async-job traces preserve configured workflow, task/batch, named-agent, and model/tool hierarchy across concurrent researchers without copying graph-state content into structural agent spans
 
 **Agent Skills, UX, and developer workflow**
 

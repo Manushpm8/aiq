@@ -15,6 +15,12 @@ Deploy AI-Q from the cloned repository using the local Helm chart.
 
 Create the namespace and required user-supplied credentials first:
 
+The source chart derives every namespaced resource from Helm's
+`.Release.Namespace`, supplied with `-n`. This guide uses `ns-aiq`; if you choose a
+different namespace, use it consistently for the Helm release, Secrets, `kubectl`
+commands, and external identity bindings. Setting `aiq.namespace.create=true` controls
+whether the chart renders a Namespace object; it does not override the release namespace.
+
 ```bash
 kubectl create namespace ns-aiq --dry-run=client -o yaml | kubectl apply -f -
 

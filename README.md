@@ -65,16 +65,16 @@ The NVIDIA AI-Q Blueprint is an enterprise-grade research agent built on the [NV
 - **Report follow-up** — Ask questions about a completed report, create a child-job cosmetic rewrite, or run delta research with the parent report as context.
 - **Workflow configuration** — YAML configs define agents, tools, LLMs, and routing behavior so you can tune workflows without code changes.
 - **Modular workflows** — All agents (orchestration node, shallow researcher, deep researcher, clarifier) are composable; each can run standalone or as part of the full pipeline.
-- **Skills, sandbox execution, and durable outputs** — Built-in research/synthesis skills run code through a provider-neutral sandbox contract. Modal is fresh per job; the experimental OpenShell profile uses one shared, pre-provisioned sandbox and is not a multi-tenant isolation boundary. Rich-file capture is opt-in, with SQL or S3-compatible byte storage.
+- **Skills, sandbox execution, and durable outputs** — Built-in research/synthesis skills run code through a provider-neutral sandbox contract. Modal is fresh per job; the experimental OpenShell profile uses one shared, pre-provisioned sandbox and is not a multi-tenant isolation boundary. Opt-in rich-file capture checkpoints manifest-declared files after successful sandbox commands, finalizes on success/failure, stores bytes in SQL or S3-compatible storage, and delivers metadata to the Files tab live and on replay.
 - **Portable Agent Skills** — `aiq-deploy` selects, starts, and validates an AI-Q deployment; `aiq-research` calls routed chat and async research from compatible coding harnesses.
 - **Data source registry** — UI toggles and request payloads can select web, paper, enterprise, collaboration, and knowledge-layer sources per message.
 - **Expanded sources** — Paper search supports Serper, SerpAPI, and SearchAPI; focused profiles demonstrate DuckDuckGo news, Polymarket, and OpenSearch knowledge retrieval.
 - **Production API and auth** — REST endpoints, async job ownership, per-user OAuth-protected MCP sources, token validator entry points, and provider lifecycle hooks support authenticated deployments.
 - **Opt-in policy controls** — NeMo Guardrails middleware covers selected workflow and agent boundaries, and narrow application-level encryption can protect final async output plus selected artifact-event content.
-- **Profiling and cost analysis** — Tokenomics reports combine NAT profiler traces with pricing configuration for cost, latency, and cache analysis.
+- **Observability, profiling, and cost analysis** — NAT-exported async traces preserve task, named-agent, and model/tool hierarchy across concurrent researchers. Tokenomics reports combine profiler traces with pricing configuration for cost, latency, and cache analysis.
 - **Evaluation harnesses** — Built-in benchmarks (for example, FreshQA, DeepResearch) and evaluation scripts to measure quality and iterate on prompts and agent architecture.
 - **Frontend options** — Run through CLI, web UI, or async jobs. Refer to [Getting started](#getting-started) and [Ways to run the agents](#ways-to-run-the-agents).
-- **Deployment options** - Deployment assets for a [docker compose](deploy/compose/) as well as [helm deployment](deploy/helm/deployment-k8s/).
+- **Deployment options** - Deployment assets for [Docker Compose](deploy/compose/) and [Helm](deploy/helm/deployment-k8s/); the repository source chart honors the Helm release namespace for every namespaced resource.
 
 ## What's New in 2.2
 
@@ -408,7 +408,7 @@ For development, contribution, and documentation, refer to:
 - [x] **Per-user MCP OAuth:** Connect each signed-in user to protected MCP data sources through the UI.
 - [x] **Skills & Sandboxing:** Support built-in deep-research skills through a provider-neutral contract. Modal is fresh per job; the experimental OpenShell profile is shared and not a multi-tenant isolation boundary.
 - [x] **Report Follow-up and Rewriting:** Answer against a completed report, submit cosmetic child rewrites, and run delta research with parent-report context.
-- [x] **Durable Sandbox Artifacts:** Opt-in best-effort capture with SQL metadata and SQL or S3-compatible byte storage.
+- [x] **Durable Sandbox Artifacts:** Opt-in manifest checkpoints after successful sandbox commands, terminal harvesting on success/failure, SQL or S3-compatible byte storage, and live/replayed Files-tab access.
 - [ ] **Custom Skill Management:** Add UI and lifecycle controls for user-provided skill bundles.
 - [ ] **Dynamic Model Routing:** Allow sub-agents to automatically select the optimal model per task.
 - [ ] **Resource Management:** Implement configurable token caps and tool-call budgets.

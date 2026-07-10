@@ -27,6 +27,13 @@ deploy/helm/
 | [NGC Helm chart](#install-from-ngc-helm-repository) | Install a pre-built chart from the NGC Helm repository |
 | [Source chart](deployment-k8s/README.md) | You cloned the repository and want to build/deploy from source |
 
+All examples use `ns-aiq`. The repository source chart derives every namespaced
+resource from Helm's `.Release.Namespace`, supplied with `-n`; use a different namespace
+consistently across Helm, Secrets, `kubectl`, and external identity bindings. The
+`aiq.namespace.create` value controls whether the source chart renders a Namespace object
+and does not override `-n`. The published NGC instructions below remain pinned to chart
+2.0.0 and should not be read as a published 2.2 artifact.
+
 ## Prerequisites
 
 - Kubernetes cluster (EKS, GKE, AKS, or a local cluster such as Kind or Minikube)
@@ -165,10 +172,10 @@ aiq:
 A complete example is available at
 [`deploy/helm/examples/aws-opensearch-serverless-values.yaml`](examples/aws-opensearch-serverless-values.yaml).
 
-For EKS Pod Identity, associate the IAM role with the backend service account for this release. With the default chart
-names, the namespace is `ns-aiq` and the backend service account is `aiq-backend`. EKS Pod Identity associations are
-created through EKS, not by annotating the service account. The role also needs OpenSearch Serverless IAM access and a
-data access policy for the target collection/index pattern.
+For EKS Pod Identity, associate the IAM role with the backend service account for this release. These examples install
+into `ns-aiq`, and the backend service account is `aiq-backend`. If you change `-n`, create the association in that same
+release namespace. EKS Pod Identity associations are created through EKS, not by annotating the service account. The role
+also needs OpenSearch Serverless IAM access and a data access policy for the target collection/index pattern.
 
 ### Verify
 

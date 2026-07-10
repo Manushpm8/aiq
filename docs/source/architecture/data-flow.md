@@ -41,21 +41,30 @@ sequenceDiagram
         A->>ES: Store intermediate events
         ES-->>SSE: Push events to client
         SSE-->>C: SSE event data
-    end
-
-    opt Successful report with artifact capture enabled
-        A->>AS: Persist captured metadata and bytes
-        A->>ES: Store artifact metadata notification
-        ES-->>SSE: Push artifact event
-        SSE-->>C: artifact metadata + content URL
+        opt Successful sandbox execute with artifact capture enabled
+            A->>AS: Checkpoint manifest-declared files
+            A->>ES: Store artifact.update metadata
+            ES-->>SSE: Push artifact.update
+            SSE-->>C: File metadata + content URL
+        end
     end
 
     A-->>D: Final result
+    opt Artifact capture enabled
+        D->>AS: Finalize artifacts (idempotent)
+        D->>ES: Store new artifact.update events
+    end
     D->>ES: Store final events
     D->>JS: Update status (SUCCESS)
     JS-->>SSE: Push job.status
     SSE-->>C: job.status {status: SUCCESS}
 ```
+
+Artifact checkpoints run after successful sandbox `execute` calls. On a terminal
+success or failure path, the worker performs one idempotent manifest-plus-directory
+scan before sandbox cleanup. Cancellation performs that scan only when the provider
+operation lease is immediately available; otherwise the provider is terminated without
+waiting and artifacts from earlier checkpoints remain durable.
 
 ## Async Job States
 
@@ -89,8 +98,8 @@ crashed workers.
 
 Most lifecycle events use a `category.state` naming convention aligned with NeMo Agent Toolkit's
 `IntermediateStep` structure. The `AgentEventCallback` (a [LangChain](https://docs.langchain.com/) callback
-handler) translates LangChain lifecycle events into this shape. Durable artifact capture emits the separate
-top-level `artifact` and `artifact.warning` event types directly.
+handler) translates LangChain lifecycle events into this shape. Durable file captures also use
+`artifact.update`; rejected candidates use the separate top-level `artifact.warning` event.
 
 | Event Type | Category | State | Description |
 | ---------- | -------- | ----- | ----------- |
@@ -103,8 +112,7 @@ top-level `artifact` and `artifact.warning` event types directly.
 | `llm.end` | `llm` | `end` | LLM invocation completes; includes usage metadata and optional thinking/reasoning |
 | `tool.start` | `tool` | `start` | Tool execution begins; includes tool name and input |
 | `tool.end` | `tool` | `end` | Tool execution completes; may emit `citation_source` artifacts for search tools |
-| `artifact.update` | `artifact` | `update` | Event-derived file, citation, todo, or output state update |
-| `artifact` | -- | -- | Metadata notification for a file captured in the durable artifact store; includes a content URL but not file bytes |
+| `artifact.update` | `artifact` | `update` | File, citation, todo, or output update; durable files contain metadata and a content URL, never bytes |
 | `artifact.warning` | -- | -- | Durable artifact candidate was rejected; includes its path and the rejection reason |
 | `job.update` | `job` | `update` | Retry notification when a chain (LLM call) fails and is retried |
 | `job.error` | `job` | -- | Error during job execution |
@@ -131,21 +139,28 @@ Lifecycle events produced by `AgentEventCallback` follow the `IntermediateStepEv
 }
 ```
 
-Durable artifact notifications use a separate top-level payload rather than that `category.state` envelope:
+Captured durable files use the same `artifact.update` envelope as other file updates. Their
+nested `data.type` is `file`, and the payload contains metadata rather than file bytes:
 
 ```json
 {
-  "type": "artifact",
-  "artifact_id": "artifact-uuid",
-  "kind": "image",
-  "filename": "market-share.png",
-  "mime_type": "image/png",
-  "size_bytes": 184320,
-  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "title": "Market share",
-  "caption": "Market share by vendor",
-  "inline": true,
-  "content_url": "/v1/jobs/async/job/job-uuid/artifacts/artifact-uuid/content"
+  "type": "artifact.update",
+  "name": "market-share.png",
+  "data": {
+    "type": "file",
+    "url": "/v1/jobs/async/job/job-uuid/artifacts/artifact-uuid/content",
+    "content_url": "/v1/jobs/async/job/job-uuid/artifacts/artifact-uuid/content",
+    "file_path": "market-share.png",
+    "artifact_id": "artifact-uuid",
+    "job_id": "job-uuid",
+    "kind": "image",
+    "mime_type": "image/png",
+    "size_bytes": 184320,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "title": "Market share",
+    "caption": "Market share by vendor",
+    "inline": true
+  }
 }
 ```
 
@@ -160,18 +175,19 @@ events.
 
 | Artifact Type | Description |
 | ------------- | ----------- |
-| `file` | Virtual-filesystem file content or metadata emitted by a deep-research tool |
+| `file` | Legacy virtual-filesystem content or durable generated-file metadata with a job-scoped content URL |
 | `output` | Intermediate output (draft section, summary) |
 | `citation_source` | A source URL or reference discovered during research |
 | `citation_use` | An inline citation placed in the report |
 | `todo` | A research task tracked by `TodoListMiddleware` |
 
 Durable sandbox artifacts are a separate persistence contract for generated files such as charts, CSVs,
-notebooks, and documents. Capture is opt-in and best-effort on the successful report path. The durable store, not
-the replayed event state, is authoritative for those records and bytes. After a file is captured, the runtime may
-emit a top-level `artifact` event containing metadata and a content URL; it emits top-level `artifact.warning` when
-a candidate is rejected. Neither is an `artifact.update` nested artifact type. List authoritative metadata with
-`GET /v1/jobs/async/job/{job_id}/artifacts` and fetch content with
+notebooks, and documents. Capture is opt-in and best-effort. Successful `execute` calls checkpoint
+manifest-declared files; success/failure terminal paths perform one final manifest-plus-directory scan, while a
+busy cancellation skips that scan rather than waiting on the provider. The durable store, not the replayed event,
+is authoritative for artifact records and bytes. Stored `artifact.update` events provide metadata-only live and
+replayed delivery to clients, including the web UI Files tab. A rejected candidate instead emits top-level
+`artifact.warning`. List authoritative metadata with `GET /v1/jobs/async/job/{job_id}/artifacts` and fetch content with
 `GET /v1/jobs/async/job/{job_id}/artifacts/{artifact_id}/content`. See the
 [REST API](../integration/rest-api.md#durable-sandbox-artifacts) for the complete capture, authorization, retention,
 and content-serving contract.

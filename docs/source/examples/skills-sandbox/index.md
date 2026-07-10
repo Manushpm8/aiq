@@ -204,6 +204,7 @@ No config change is required for additional built-in skills inside an enabled co
 - Text artifacts that need to survive for the report should be written through DeepAgents filesystem tools to `/shared/...`.
 - `/shared/` is a virtual DeepAgents filesystem path. Use `ls`, `read_file`, `write_file`, and `edit_file` for `/shared/`; do not inspect `/shared/` with shell commands through `execute`.
 - The sandbox is configured with `network: blocked`, so research should happen through AI-Q search tools, not from sandbox code.
-- Durable sandbox artifact capture is opt-in (`artifact_capture.enabled: true`) and also requires an artifact store. Final
-  harvesting is best-effort; adding a sandbox alone does not guarantee that generated files are persisted or embedded in
-  the report.
+- Durable sandbox artifact capture is opt-in (`artifact_capture.enabled: true`) and also requires an artifact store.
+  Successful `execute` calls checkpoint manifest-declared files, and success/failure terminal paths perform one final
+  best-effort scan. A busy cancellation skips that scan and preserves earlier checkpoints. Adding a sandbox alone does
+  not guarantee that every generated file is persisted or embedded in the report.

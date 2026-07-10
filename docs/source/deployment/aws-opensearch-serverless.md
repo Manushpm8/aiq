@@ -238,8 +238,10 @@ collections).
 
 ## Associate the role with the AIQ service account
 
-EKS Pod Identity binds an IAM role to a Kubernetes service account. With the default Helm
-release names, the namespace is `ns-aiq` and the backend service account is `aiq-backend`.
+EKS Pod Identity binds an IAM role to a Kubernetes service account. The commands in this
+guide install the source chart into `ns-aiq`, and the backend service account is
+`aiq-backend`. The source chart honors the namespace passed with `helm -n`; if you choose
+another namespace, use it for this association and every Secret and `kubectl` command.
 
 ```bash
 aws eks create-pod-identity-association \

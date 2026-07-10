@@ -103,6 +103,14 @@ For the full NGC chart workflow (value overrides, upgrades, troubleshooting), se
 
 If you cloned the repository, you can deploy from the local source chart. See the source chart README at `deploy/helm/deployment-k8s/README.md` in the source repository for full details including Kind local development.
 
+The source chart on `develop` derives every namespaced resource from Helm's
+`.Release.Namespace`, which is the value passed with `-n`. The examples use `ns-aiq`,
+but you can choose another namespace by replacing it consistently in Helm, `kubectl`,
+Secret creation, and external bindings such as EKS Pod Identity. The
+`aiq.namespace.create` value controls whether the chart renders a Namespace object; it
+does not override `-n`. This behavior applies to the repository source chart and does not
+change the published NGC 2.0.0 instructions above.
+
 ```bash
 cd deploy/helm
 
