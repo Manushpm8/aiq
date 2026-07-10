@@ -34,6 +34,7 @@ from nat.builder.builder import Builder
 from nat.builder.context import Context
 from nat.builder.function_info import FunctionInfo
 from nat.cli.register_workflow import register_function
+from nat.data_models.common import OptionalSecretStr
 from nat.data_models.function import FunctionBaseConfig
 
 logger = logging.getLogger(__name__)
@@ -266,7 +267,7 @@ class KnowledgeRetrievalConfig(FunctionBaseConfig, name="knowledge_retrieval"):
         default_factory=lambda: _url_from_env("AZURE_SEARCH_ENDPOINT"),
         description="Azure AI Search service URL; defaults to AZURE_SEARCH_ENDPOINT",
     )
-    azure_search_api_key: SecretStr | None = Field(
+    azure_search_api_key: OptionalSecretStr = Field(
         default_factory=lambda: _secret_from_env("AZURE_SEARCH_API_KEY"),
         description="Optional Azure AI Search admin key; defaults to AZURE_SEARCH_API_KEY",
     )

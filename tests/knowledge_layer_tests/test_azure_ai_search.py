@@ -388,6 +388,19 @@ def test_setup_backend_preserves_secrets_and_prefix(monkeypatch):
     assert backend_config["index_prefix"] == "tenant-aiq"
 
 
+def test_search_api_key_survives_nat_json_serialization():
+    api_key = "test-search-key"  # pragma: allowlist secret
+    config = KnowledgeRetrievalConfig(
+        backend="azure_ai_search",
+        azure_search_endpoint="https://example.search.windows.net",
+        azure_search_api_key=api_key,
+    )
+
+    serialized = config.model_dump(mode="json", by_alias=True, round_trip=True)
+
+    assert serialized["azure_search_api_key"] == api_key
+
+
 def test_index_name_is_stable_and_changes_with_embedding_configuration():
     index = _index_name_for_config("AIQ Prod", "test/embed", 2048)
 
