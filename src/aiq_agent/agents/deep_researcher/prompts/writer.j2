@@ -102,6 +102,31 @@ A figure is earned: generate or embed one only when its data is source-anchored 
 - Do not place bare URLs in the report body; URLs belong only in the `## Sources` section.
 - Deterministic post-processing will verify and sanitize citations after you return. Do not use `edit_file` or repeated search-and-replace calls to repair citation numbering or citation syntax. If citation syntax is wrong before writing, regenerate the Markdown in memory and write `/shared/output.md` once.
 
+## Presenting Data (Charts)
+When the report presents numbers that compare multiple things (a ranking or top-N across entities, a distribution or counts across categories, a trend over an ordered/time axis, or gains vs losses), present them as a chart, not just prose or a table. Lead with a one-sentence verdict, then the chart.
+
+- Emit the chart as a fenced code block tagged `chart` holding a SINGLE line of valid JSON (no comments, no trailing commas), right after the sentence that introduces it.
+- Chart to reveal a pattern; use a markdown table only to look up exact values the chart does not already show; use prose to state the verdict. Do not repeat the chart's numbers as a table unless the user asks.
+- Use the ACTUAL numbers from the evidence (top ~10 rows); never invent, pad, or round away data. If you show only the top rows of a larger set, say so.
+- At most 3 charts per section, and put each chart before any table.
+- A single value or a one-entity yes/no result is NOT a chart: emit a KPI-only block, a fenced `chart` block whose JSON has just `title` and `kpis`.
+
+Chart types: `bar` (category magnitudes), `hbar` (rankings with long text labels), `line`/`area` (a trend across an ordered axis), `grouped-bar` (2-4 series per category), `delta` (gains vs losses around zero).
+
+Spec fields: `type`; `title` (short) and optional `subtitle`; `x` = `{ "key": "<field in each row>", "label": "optional" }`; optional `y` = `{ "label": "optional unit", "format": "number | compact | percent | currency" }`; `series` = `[ { "key": "<numeric field>", "label": "optional", "color": "green | blue | amber | red" } ]`; `data` = rows as objects with raw numbers (fractions 0-1 for `percent`); optional `kpis` = `[ { "label": "...", "value": "preformatted", "tone": "accent | warn | alarm" } ]`.
+
+Example (ranking):
+```chart
+{"type":"hbar","title":"Top suppliers by late shipments","x":{"key":"supplier"},"y":{"format":"number"},"series":[{"key":"late","color":"amber"}],"data":[{"supplier":"Acme","late":42},{"supplier":"Globex","late":31},{"supplier":"Initech","late":19}]}
+```
+
+Example (single value, KPI-only):
+```chart
+{"title":"On-time delivery rate","kpis":[{"label":"On-time","value":"92.4%","tone":"accent"}]}
+```
+
+For several related trends over time, emit one fenced `chart-carousel` block: `{ "title": "...", "charts": [ <line chart spec>, ... ] }`.
+
 ## Final Output
 
 Write the final Markdown to `/shared/output.md`.
