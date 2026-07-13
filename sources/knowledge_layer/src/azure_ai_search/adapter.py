@@ -1215,11 +1215,6 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
             [_record_id(_RECORD_FILE, collection_name, file_id)],
         )
         self._deleted_files.add((collection_name, file_id))
-        self._wait_for_search_state(
-            _record_filter(_RECORD_FILE, collection_name, file_id=file_id),
-            present=False,
-            label=f"file {file_id!r}",
-        )
         with self._jobs_lock:
             self._files.pop(file_id, None)
 
@@ -1235,6 +1230,11 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
             else:
                 unregister_summary(collection_name, info.file_name)
         self._update_collection_timestamp(collection_name)
+        self._wait_for_search_state(
+            _record_filter(_RECORD_FILE, collection_name, file_id=file_id),
+            present=False,
+            label=f"file {file_id!r}",
+        )
         return True
 
     def list_files(self, collection_name: str) -> list[FileInfo]:

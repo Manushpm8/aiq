@@ -861,6 +861,47 @@ def test_delete_waits_for_stale_file_manifest_to_disappear(monkeypatch):
     assert ingestor.list_files("docs") == []
 
 
+def test_delete_timeout_still_commits_bookkeeping(monkeypatch):
+    ingestor, client = _ingestor(generate_summary=True)
+    ingestor.create_collection("docs")
+    now = datetime.now(UTC)
+    _write_file_manifest(
+        ingestor,
+        "older",
+        summary="Older summary",
+        ingested_at=now - timedelta(minutes=1),
+    )
+    newer = _write_file_manifest(ingestor, "newer", summary="Newer summary", ingested_at=now)
+    ingestor._files["newer"] = newer
+    client.stale_deleted_searches_remaining = 2
+    registered = []
+    timestamp_updates = []
+    update_collection_timestamp = ingestor._update_collection_timestamp
+
+    def track_collection_timestamp(collection_name):
+        timestamp_updates.append(collection_name)
+        update_collection_timestamp(collection_name)
+
+    monkeypatch.setattr(azure_adapter, "_CONSISTENCY_ATTEMPTS", 1)
+    monkeypatch.setattr(
+        azure_adapter,
+        "register_summary",
+        lambda collection, file_name, summary: registered.append((collection, file_name, summary)),
+    )
+    monkeypatch.setattr(ingestor, "_update_collection_timestamp", track_collection_timestamp)
+
+    with pytest.raises(RuntimeError, match="Timed out waiting for file 'newer' to become absent"):
+        ingestor.delete_file("newer", "docs")
+
+    assert "newer" not in ingestor._files
+    assert ingestor.get_file_status("newer", "docs") is None
+    assert registered == [("docs", "report.pdf", "Older summary")]
+    assert timestamp_updates == ["docs"]
+    assert not ingestor.delete_file("newer", "docs")
+    assert registered == [("docs", "report.pdf", "Older summary")]
+    assert timestamp_updates == ["docs"]
+
+
 def test_failed_uploads_remain_visible():
     ingestor, _client = _ingestor()
     ingestor.create_collection("docs")
