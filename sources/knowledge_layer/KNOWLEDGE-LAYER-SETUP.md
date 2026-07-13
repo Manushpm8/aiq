@@ -1046,6 +1046,7 @@ Configuration values are resolved in the following order (highest to lowest prio
 | `AIQ_CHROMA_DIR` | llamaindex | ChromaDB persistence path |
 | `AZURE_SEARCH_ENDPOINT` | azure_ai_search | Azure AI Search service endpoint |
 | `AZURE_SEARCH_API_KEY` | azure_ai_search | Optional admin key; omit to use `DefaultAzureCredential` |
+| `AZURE_CLIENT_ID` | azure_ai_search | Client ID for the user-assigned managed identity used by `DefaultAzureCredential` |
 | `AIQ_AZURE_SEARCH_INDEX_PREFIX` | azure_ai_search | Deployment-unique prefix for the shared AI-Q index (default: `aiq`) |
 | `AIQ_EMBED_MODEL` | llamaindex, azure_ai_search | Embedding model name |
 | `AIQ_EMBED_BASE_URL` | llamaindex, azure_ai_search | Embedding API base URL |

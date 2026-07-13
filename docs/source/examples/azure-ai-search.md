@@ -24,13 +24,23 @@ Install the backend dependency:
 uv pip install -e "sources/knowledge_layer[azure_ai_search]"
 ```
 
-Set the environment used by the adapter:
+Create `deploy/.env` when needed. The Azure entries are commented in the
+template so non-Azure runs do not change; uncomment the endpoint and the
+settings required for your authentication mode:
 
 ```bash
-export AZURE_SEARCH_ENDPOINT=https://<service>.search.windows.net
-export NVIDIA_API_KEY=<embedding-api-key>
-# Optional; omit to use DefaultAzureCredential.
-export AZURE_SEARCH_API_KEY=<search-admin-key>
+cp -n deploy/.env.example deploy/.env
+```
+
+```text
+NVIDIA_API_KEY=<embedding-api-key>
+AZURE_SEARCH_ENDPOINT=https://<service>.search.windows.net
+# API-key authentication:
+# AZURE_SEARCH_API_KEY=<search-admin-key>
+# User-assigned managed identity:
+# AZURE_CLIENT_ID=<managed-identity-client-id>
+# Optional deployment-unique prefix (default: aiq):
+# AIQ_AZURE_SEARCH_INDEX_PREFIX=aiq
 ```
 
 ## Grant managed identity access
@@ -46,30 +56,24 @@ Search service and grant the workload identity both of these built-in roles:
 Assign the roles at the search-service scope. The principal ID is the object ID
 of the system-assigned or user-assigned managed identity running AI-Q.
 
+Start the backend and UI with the checked-in Azure configuration:
 
-Replace the `knowledge_search` block in a web configuration such as
-`configs/config_web_default_llamaindex.yml`:
-
-```yaml
-functions:
-  knowledge_search:
-    _type: knowledge_retrieval
-    backend: azure_ai_search
-    collection_name: ${COLLECTION_NAME:-aiq_default}
-    top_k: 5
-
-    generate_summary: true
-    summary_model: summary_llm
-    summary_db: ${AIQ_SUMMARY_DB:-sqlite+aiosqlite:///./summaries.db}
+```bash
+./scripts/start_e2e.sh --config_file configs/config_web_azure_ai_search.yml
 ```
 
-Explicit YAML options override environment defaults. `AZURE_SEARCH_API_KEY`
-selects API-key authentication when present; otherwise the adapter uses
-`DefaultAzureCredential`. Set `AZURE_CLIENT_ID` to select a user-assigned
-identity. Embeddings share `AIQ_EMBED_BASE_URL`, `AIQ_EMBED_MODEL`, and
-`NVIDIA_API_KEY` with the LlamaIndex backend. Azure-specific optional settings
-are `AIQ_EMBED_DIM` and `AIQ_AZURE_SEARCH_INDEX_PREFIX`. The prefix must uniquely
-identify one AI-Q deployment when a search service is shared.
+`start_e2e.sh` sources `deploy/.env` before starting the backend, so
+uncommented values in that file replace same-named shell exports. Keep the
+Azure settings there, or leave them commented before relying on exported
+values.
+
+`AZURE_SEARCH_API_KEY` selects API-key authentication when present; otherwise
+the adapter uses `DefaultAzureCredential`. Set `AZURE_CLIENT_ID` to select a
+user-assigned identity. Embeddings share `AIQ_EMBED_BASE_URL`,
+`AIQ_EMBED_MODEL`, and `NVIDIA_API_KEY` with the LlamaIndex backend.
+Azure-specific optional settings are `AIQ_EMBED_DIM` and
+`AIQ_AZURE_SEARCH_INDEX_PREFIX`. The prefix must uniquely identify one AI-Q
+deployment when a search service is shared.
 
 Changing the embedding model or dimension selects a different physical index
 and requires re-ingestion. Frontend WebSocket queries use the conversation ID

@@ -27,6 +27,15 @@ Usage:
     python tests/knowledge_layer_tests/run_adapter_compliance.py --backend foundational_rag
     python tests/knowledge_layer_tests/run_adapter_compliance.py --backend opensearch
 
+    export AZURE_SEARCH_ENDPOINT=https://your-service.search.windows.net
+    export AZURE_SEARCH_API_KEY=your-search-admin-key
+    export AIQ_AZURE_SEARCH_INDEX_PREFIX="aiq-${USER}"
+    python tests/knowledge_layer_tests/run_adapter_compliance.py --backend azure_ai_search \
+      --config '{"start_ttl_cleanup":false}'
+
+    # For managed identity, omit AZURE_SEARCH_API_KEY. Set AZURE_CLIENT_ID for a
+    # user-assigned identity. NVIDIA_API_KEY remains required for embeddings.
+
 Exit codes:
     0 - All tests passed
     1 - Some tests failed

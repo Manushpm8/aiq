@@ -536,6 +536,7 @@ The repository includes several pre-built configurations:
 |------|------|----------|
 | `configs/config_cli_default.yml` | CLI | Web search, paper search, clarifier with plan approval |
 | `configs/config_web_default_llamaindex.yml` | Web API | LlamaIndex knowledge retrieval, web search, paper search |
+| `configs/config_web_azure_ai_search.yml` | Web API | Azure AI Search knowledge retrieval and web search |
 | `configs/config_web_frag.yml` | Web API | Foundational RAG knowledge retrieval, web search, paper search |
 
 ## Related
