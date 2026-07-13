@@ -515,13 +515,13 @@ class AzureAISearchRetriever(_AzureIndexMixin, BaseRetriever):
         top_k: int,
         filters: dict[str, Any] | None,
     ) -> RetrievalResult:
-        if filters and isinstance(filters, dict) and filters.get("$filter"):
+        if filters:
             return RetrievalResult(
                 query=query,
                 backend=_BACKEND_NAME,
                 chunks=[],
                 success=False,
-                error_message="Raw Azure AI Search $filter expressions are not supported",
+                error_message="Azure AI Search metadata filters are not supported",
             )
         try:
             client = self._get_client(collection_name)

@@ -550,7 +550,7 @@ async def test_retrieve_builds_scoped_hybrid_search_request():
     retriever._embedding = FakeEmbedding(2)
     retriever._get_client = lambda collection_name: client
 
-    result = await retriever.retrieve("hello", "session-1", top_k=5)
+    result = await retriever.retrieve("hello", "session-1", top_k=5, filters={})
 
     assert result.success
     assert client.kwargs["search_text"] == "hello"
@@ -562,14 +562,15 @@ async def test_retrieve_builds_scoped_hybrid_search_request():
 
 
 @pytest.mark.asyncio
-async def test_retrieve_rejects_raw_odata_filter():
+@pytest.mark.parametrize("filters", [{"$filter": "file_id ne ''"}, {"file_name": "report.pdf"}])
+async def test_retrieve_rejects_filters(filters):
     retriever = AzureAISearchRetriever.__new__(AzureAISearchRetriever)
     retriever._get_client = lambda collection_name: pytest.fail(f"unexpected Azure request for {collection_name}")
 
-    result = await retriever.retrieve("hello", "session-1", filters={"$filter": "file_id ne ''"})
+    result = await retriever.retrieve("hello", "session-1", filters=filters)
 
     assert not result.success
-    assert result.error_message == "Raw Azure AI Search $filter expressions are not supported"
+    assert result.error_message == "Azure AI Search metadata filters are not supported"
 
 
 def test_submit_job_uses_one_canonical_file_id(monkeypatch, tmp_path):
