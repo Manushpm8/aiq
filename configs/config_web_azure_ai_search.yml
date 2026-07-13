@@ -1,7 +1,7 @@
 # This is the Web mode configuration for Azure AI Search.
 # It has the following features:
 # - Knowledge retrieval using Azure AI Search
-# - Web search and Paper search tools by default
+# - Web search tools by default; Paper search is optional
 
 general:
   use_uvloop: true
