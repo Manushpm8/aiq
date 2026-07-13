@@ -228,8 +228,8 @@ functions:
 
 ### `knowledge_retrieval`
 
-Semantic search over ingested documents. Supports LlamaIndex (local ChromaDB), OpenSearch, Foundational RAG
-(hosted NVIDIA RAG Blueprint), Azure AI Search and OpenSearch (self-hosted OpenSearch or Amazon OpenSearch Serverless).
+Semantic search over ingested documents. Supports LlamaIndex (local ChromaDB), Foundational RAG
+(hosted NVIDIA RAG Blueprint), OpenSearch (self-hosted OpenSearch or Amazon OpenSearch Serverless), and Azure AI Search.
 
 ```yaml
 functions:
