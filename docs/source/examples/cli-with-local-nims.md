@@ -123,11 +123,9 @@ functions:
   clarifier_agent:
     _type: clarifier_agent
     llm: nemotron_super_llm
-    planner_llm: nemotron_super_llm
     tools:
       - web_search_tool
     max_turns: 3
-    enable_plan_approval: true    # Interactive plan approval in CLI
     log_response_max_chars: 2000
     verbose: true
 
@@ -182,9 +180,10 @@ dotenv -f deploy/.env run .venv/bin/nat run \
 The CLI script starts an interactive session. Type your research query and the system will:
 
 1. Classify the intent (shallow vs deep)
-2. For deep queries: present a research plan for your approval
-3. Execute the research with tool calls shown in real time
-4. Output a structured report
+2. Ask a focused clarification only when the request is genuinely ambiguous; the clarifier does not ask you to approve a plan
+3. For deep queries, build an internal structured plan and run independent research queries concurrently
+4. Show research tool activity in real time
+5. Have the writer synthesize the captured evidence into the requested output shape
 
 ### Example Session
 

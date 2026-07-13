@@ -13,6 +13,7 @@ An NVIDIA blueprint for AI-powered deep research, built on the NeMo Agent Toolki
 
 | I want to... | Go to |
 |--------------|-------|
+| Review recent changes | [Changelog](./resources/changelog.md) |
 | Read the docs in order | [Developer Guide](./get-started/developer-guide.md) |
 | Run the blueprint quickly | [Quick Start](./get-started/quick-start.md) |
 | Understand how it works | [Architecture Overview](./architecture/overview.md) |
@@ -98,6 +99,7 @@ Overview <./deployment/index.md>
 Docker Compose <./deployment/docker-compose.md>
 Docker Build System <./deployment/docker-build.md>
 Authentication <./deployment/authentication.md>
+Async Job Content Encryption <./deployment/content-encryption.md>
 Observability <./deployment/observability.md>
 Production <./deployment/production.md>
 Kubernetes <./deployment/kubernetes.md>
