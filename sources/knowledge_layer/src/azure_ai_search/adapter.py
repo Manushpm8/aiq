@@ -775,19 +775,13 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
                 )
             return job_id
 
-        self._ensure_index()
-        collection = self._get_collection_manifest(collection_name)
-        if collection is None:
-            self._write_collection_manifest(collection_name)
-        elif collection.get("status") != _COLLECTION_ACTIVE:
-            raise ValueError(f"Collection {collection_name!r} is being deleted")
-
         submitted_at = _utc_now()
         file_progress: list[FileProgress] = []
+        files: dict[str, FileInfo] = {}
         for path, file_name in validated:
             file_id = str(uuid.uuid4())
             file_progress.append(FileProgress(file_id=file_id, file_name=file_name, status=FileStatus.UPLOADING))
-            info = FileInfo(
+            files[file_id] = FileInfo(
                 file_id=file_id,
                 file_name=file_name,
                 collection_name=collection_name,
@@ -796,11 +790,9 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
                 uploaded_at=submitted_at,
                 metadata={**file_metadata, "job_id": job_id},
             )
-            with self._jobs_lock:
-                self._files[file_id] = info
-            self._write_file_manifest(info)
 
         with self._jobs_lock:
+            self._files.update(files)
             self._jobs[job_id] = IngestionJobStatus(
                 job_id=job_id,
                 status=JobState.PENDING,
@@ -811,12 +803,19 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
                 file_details=file_progress,
             )
 
-        threading.Thread(
-            target=self._process_job,
-            args=(job_id, [path for path, _ in validated], collection_name, job_config),
-            daemon=True,
-            name=f"aiq-azure-search-ingest-{job_id[:8]}",
-        ).start()
+        try:
+            threading.Thread(
+                target=self._process_job,
+                args=(job_id, [path for path, _ in validated], collection_name, job_config),
+                daemon=True,
+                name=f"aiq-azure-search-ingest-{job_id[:8]}",
+            ).start()
+        except Exception as error:  # noqa: BLE001
+            message = f"Failed to start ingestion worker: {self._translate_error(error)}"
+            self._fail_job_setup(job_id, message)
+            if job_config.get("cleanup_files", self.cfg.cleanup_files):
+                self._cleanup_paths([path for path, _ in validated])
+            logger.exception("Failed to start Azure AI Search ingestion job %s", job_id)
         return job_id
 
     def get_job_status(self, job_id: str) -> IngestionJobStatus:
@@ -843,11 +842,34 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
     ) -> None:
         cleanup = bool(config.get("cleanup_files", self.cfg.cleanup_files))
         self._update_job(job_id, status=JobState.PROCESSING, started_at=_utc_now())
-        collection = self._get_collection_manifest(collection_name)
-        if collection is None or collection.get("status") != _COLLECTION_ACTIVE:
-            self._fail_job(job_id, f"Collection {collection_name!r} is unavailable")
+        client: SearchClient | None = None
+        try:
+            self._ensure_index()
+            client = self._get_validated_search_client()
+            collection = self._get_collection_manifest(collection_name)
+            if collection is None:
+                self._write_collection_manifest(collection_name)
+            elif collection.get("status") != _COLLECTION_ACTIVE:
+                raise ValueError(f"Collection {collection_name!r} is being deleted")
+
+            job = self.get_job_status(job_id)
+            for detail in job.file_details:
+                self._write_file_manifest(self._files[detail.file_id])
+        except Exception as error:  # noqa: BLE001
+            message = self._translate_error(error)
+            if client is not None:
+                try:
+                    job = self.get_job_status(job_id)
+                    self._delete_document_ids(
+                        client,
+                        [_record_id(_RECORD_FILE, collection_name, detail.file_id) for detail in job.file_details],
+                    )
+                except Exception as rollback_error:  # noqa: BLE001
+                    message = f"{message}; manifest rollback failed: {self._translate_error(rollback_error)}"
+            self._fail_job_setup(job_id, message)
             if cleanup:
                 self._cleanup_paths(file_paths)
+            logger.exception("Failed to initialize Azure AI Search ingestion job %s", job_id)
             return
 
         failed = 0
@@ -1053,6 +1075,30 @@ class AzureAISearchIngestor(TTLCleanupMixin, _AzureIndexMixin, BaseIngestor):
 
     def _fail_job(self, job_id: str, error_message: str) -> None:
         self._update_job(job_id, status=JobState.FAILED, error_message=error_message, completed_at=_utc_now())
+
+    def _fail_job_setup(self, job_id: str, error_message: str) -> None:
+        with self._jobs_lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            details = [
+                detail.model_copy(update={"status": FileStatus.FAILED, "error_message": error_message})
+                for detail in job.file_details
+            ]
+            for detail in details:
+                if tracked := self._files.get(detail.file_id):
+                    tracked.status = FileStatus.FAILED
+                    tracked.error_message = error_message
+                self._deleted_files.add((job.collection_name, detail.file_id))
+            self._jobs[job_id] = job.model_copy(
+                update={
+                    "status": JobState.FAILED,
+                    "processed_files": job.total_files,
+                    "file_details": details,
+                    "error_message": error_message,
+                    "completed_at": _utc_now(),
+                }
+            )
 
     def _update_file_progress(self, job_id: str, index: int, **fields: Any) -> None:
         summary = fields.pop("summary", None)

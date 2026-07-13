@@ -39,6 +39,7 @@ from aiq_agent.knowledge import RetrievalResult
 from aiq_agent.knowledge.factory import is_ingestor_registered
 from aiq_agent.knowledge.factory import is_retriever_registered
 from aiq_agent.knowledge.schema import FileStatus
+from aiq_agent.knowledge.schema import JobState
 
 
 class FakeIndexingResult:
@@ -594,9 +595,85 @@ def test_submit_job_uses_one_canonical_file_id(monkeypatch, tmp_path):
     job = ingestor.get_job_status(job_id)
     file_id = job.file_details[0].file_id
 
+    assert job.status == JobState.PENDING
     assert file_id in ingestor._files
     assert ingestor._files[file_id].file_name == "original.txt"
-    assert ingestor.get_file_status(file_id, "docs").metadata["large"] == "x" * 10_000
+    assert ingestor._files[file_id].metadata["large"] == "x" * 10_000
+    assert _client.documents == {}
+
+
+@pytest.mark.parametrize("rollback_fails", [False, True])
+def test_submit_job_rolls_back_manifests_when_second_write_fails(monkeypatch, tmp_path, rollback_fails):
+    class SynchronousThread:
+        def __init__(self, *, target, args, **kwargs):
+            del kwargs
+            self.target = target
+            self.args = args
+
+        def start(self):
+            self.target(*self.args)
+
+    monkeypatch.setattr(azure_adapter.threading, "Thread", SynchronousThread)
+    paths = [tmp_path / "first.txt", tmp_path / "second.txt"]
+    for path in paths:
+        path.write_text("content", encoding="utf-8")
+    ingestor, client = _ingestor()
+    write_manifest = ingestor._write_file_manifest
+    writes = []
+
+    def fail_second_manifest(info, **kwargs):
+        assert info.metadata["job_id"] in ingestor._jobs
+        writes.append(info.file_id)
+        if len(writes) == 2:
+            raise RuntimeError("second manifest failed")
+        return write_manifest(info, **kwargs)
+
+    monkeypatch.setattr(ingestor, "_write_file_manifest", fail_second_manifest)
+    if rollback_fails:
+
+        def fail_rollback(*args, **kwargs):
+            raise RuntimeError("rollback unavailable")
+
+        monkeypatch.setattr(ingestor, "_delete_document_ids", fail_rollback)
+
+    job_id = ingestor.submit_job([str(path) for path in paths], "docs")
+    job = ingestor.get_job_status(job_id)
+
+    assert job.status == JobState.FAILED
+    assert job.processed_files == 2
+    assert all(detail.status == FileStatus.FAILED for detail in job.file_details)
+    assert all(ingestor._files[detail.file_id].status == FileStatus.FAILED for detail in job.file_details)
+    assert "second manifest failed" in job.error_message
+    if rollback_fails:
+        assert "manifest rollback failed: rollback unavailable" in job.error_message
+    else:
+        assert not [document for document in client.documents.values() if document.get("record_type") == "file"]
+        assert client.delete_batches
+    assert all(path.exists() for path in paths)
+
+
+def test_submit_job_records_thread_start_failure(monkeypatch, tmp_path):
+    class FailingThread:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("thread unavailable")
+
+    monkeypatch.setattr(azure_adapter.threading, "Thread", FailingThread)
+    path = tmp_path / "document.txt"
+    path.write_text("content", encoding="utf-8")
+    ingestor, client = _ingestor()
+
+    job_id = ingestor.submit_job([str(path)], "docs", {"cleanup_files": True})
+    job = ingestor.get_job_status(job_id)
+
+    assert job.status == JobState.FAILED
+    assert job.processed_files == 1
+    assert job.file_details[0].status == FileStatus.FAILED
+    assert "thread unavailable" in job.error_message
+    assert client.documents == {}
+    assert not path.exists()
 
 
 def test_upload_file_preserves_caller_owned_source_by_default(monkeypatch, tmp_path):
