@@ -419,7 +419,7 @@ def test_marker_and_schema_validation_reject_unowned_and_mismatched_indexes():
     marker = _new_marker(cfg)
     index = _build_index_schema("aiq-docs-123456789abc", 4, _encode_marker(marker))
 
-    assert _validate_index_schema(index, cfg)["schema_version"] == 2
+    assert _validate_index_schema(index, cfg)["schema_version"] == 1
     assert "metadata" not in marker
     assert "collection" not in marker
     index.description = "unmanaged"
@@ -468,14 +468,14 @@ def test_create_waits_for_collection_manifest_search_visibility(monkeypatch):
     assert [item.name for item in ingestor.list_collections()] == ["docs"]
 
 
-def test_legacy_and_foreign_indexes_are_ignored():
+def test_mismatched_and_foreign_indexes_are_ignored():
     ingestor, _client = _ingestor()
-    legacy_marker = _new_marker(ingestor.cfg)
-    legacy_marker["schema_version"] = 1
-    ingestor._index_client.indexes["aiq-test-docs-v1"] = _build_index_schema(
-        "aiq-test-docs-v1",
+    mismatched_marker = _new_marker(ingestor.cfg)
+    mismatched_marker["schema_version"] = azure_adapter._SCHEMA_VERSION + 1
+    ingestor._index_client.indexes["aiq-test-docs-mismatched"] = _build_index_schema(
+        "aiq-test-docs-mismatched",
         ingestor.cfg.embed_dim,
-        _encode_marker(legacy_marker),
+        _encode_marker(mismatched_marker),
     )
     ingestor._index_client.indexes["foreign"] = SearchIndex(name="foreign", fields=[], description="foreign")
 

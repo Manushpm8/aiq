@@ -179,8 +179,7 @@ service.
 Azure stores all logical collections in one physical index selected by the
 prefix, schema version, embedding model, and dimension. Collection, file, and
 chunk manifests enforce logical isolation. Retrieval is always hybrid, and
-chunking is fixed at 1024 tokens with 128-token overlap. Schema-version-1
-indexes are ignored and require re-ingestion.
+chunking is fixed at 1024 tokens with 128-token overlap.
 
 Upload responses return canonical UUID file IDs. Same-name uploads coexist as
 independent files. Collection cleanup uses `AIQ_COLLECTION_TTL_HOURS` (24 hours

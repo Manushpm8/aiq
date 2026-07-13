@@ -80,6 +80,5 @@ The backend stores collection, file, and chunk records in one physical index
 selected by `azure_search_index_prefix`, schema version, embedding model, and
 dimension. Every operation applies internal collection filters. Retrieval is
 always hybrid, and ingestion uses fixed 1024-token chunks with 128-token
-overlap. Schema-version-1 indexes are ignored and must be re-ingested. File IDs
-returned by upload are authoritative for status and delete operations;
-same-name uploads coexist independently.
+overlap. File IDs returned by upload are authoritative for status and
+delete operations; same-name uploads coexist independently.
