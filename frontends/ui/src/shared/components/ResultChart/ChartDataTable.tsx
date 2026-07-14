@@ -5,12 +5,12 @@ import type { FC } from 'react'
 import type { ChartSpec } from './types'
 
 /** The chart's exact underlying rows, shown by the "Show data" toggle. */
-export const ChartDataTable: FC<{ spec: ChartSpec }> = ({ spec }) => {
+export const ChartDataTable: FC<{ spec: ChartSpec; id?: string }> = ({ spec, id }) => {
   const columns = [spec.x.key, ...spec.series.map((s) => s.key)]
   const headers = [spec.x.label ?? spec.x.key, ...spec.series.map((s) => s.label ?? s.key)]
 
   return (
-    <div className="result-chart-data" role="region" aria-label="Chart data">
+    <div className="result-chart-data" role="region" aria-label="Chart data" id={id}>
       <table className="result-chart-data-table">
         <thead>
           <tr>

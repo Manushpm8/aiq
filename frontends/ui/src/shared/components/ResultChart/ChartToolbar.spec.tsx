@@ -15,19 +15,23 @@ const spec: ChartSpec = {
 }
 
 describe('ChartToolbar', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
 
-  test('reflects the open state and fires the toggle', () => {
+  test('reflects the open state, fires the toggle, and controls the data region', () => {
     const onToggleData = vi.fn()
     const { rerender } = render(
-      <ChartToolbar spec={spec} dataOpen={false} onToggleData={onToggleData} />,
+      <ChartToolbar spec={spec} dataOpen={false} dataId="chart-data-1" onToggleData={onToggleData} />,
     )
     const toggle = screen.getByRole('button', { name: 'Show data' })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).toHaveAttribute('aria-controls', 'chart-data-1')
     fireEvent.click(toggle)
     expect(onToggleData).toHaveBeenCalledOnce()
 
-    rerender(<ChartToolbar spec={spec} dataOpen onToggleData={onToggleData} />)
+    rerender(<ChartToolbar spec={spec} dataOpen dataId="chart-data-1" onToggleData={onToggleData} />)
     expect(screen.getByRole('button', { name: 'Hide data' })).toHaveAttribute('aria-expanded', 'true')
   })
 
@@ -37,12 +41,11 @@ describe('ChartToolbar', () => {
     vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
 
-    render(<ChartToolbar spec={spec} dataOpen={false} onToggleData={vi.fn()} />)
+    render(<ChartToolbar spec={spec} dataOpen={false} dataId="chart-data-1" onToggleData={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: /CSV/ }))
 
     expect(createObjectURL).toHaveBeenCalledOnce()
     expect(click).toHaveBeenCalledOnce()
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock')
-    vi.unstubAllGlobals()
   })
 })

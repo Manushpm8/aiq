@@ -389,10 +389,10 @@ body {
   color: var(--color-brand);
 }
 .result-chart-kpi.tone-warn .result-chart-kpi-v {
-  color: #e8b500;
+  color: var(--text-color-feedback-warning);
 }
 .result-chart-kpi.tone-alarm .result-chart-kpi-v {
-  color: #e5484d;
+  color: var(--text-color-feedback-danger);
 }
 .result-chart-kpi-s {
   font-size: 0.72rem;

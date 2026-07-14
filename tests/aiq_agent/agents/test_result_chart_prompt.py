@@ -35,6 +35,7 @@ _PROMPTS = {
 # Kept in lockstep with CHART_TYPES in the UI's ResultChart/types.ts.
 _CHART_TYPES = {"bar", "hbar", "line", "area", "grouped-bar", "delta"}
 _CHART_BLOCK = re.compile(r"```chart\n(.*?)\n```", re.DOTALL)
+_CAROUSEL_BLOCK = re.compile(r"```chart-carousel\n(.*?)\n```", re.DOTALL)
 
 
 def _chart_examples(prompt_key: str) -> list[dict]:
@@ -49,6 +50,20 @@ def test_prompt_defines_the_chart_contract(prompt_key: str) -> None:
     assert "chart-carousel" in text
     for chart_type in _CHART_TYPES:
         assert chart_type in text, f"{prompt_key} prompt omits chart type {chart_type!r}"
+
+
+@pytest.mark.parametrize("prompt_key", list(_PROMPTS))
+def test_prompt_carousel_examples_match_the_schema(prompt_key: str) -> None:
+    text = _PROMPTS[prompt_key].read_text()
+    for block in _CAROUSEL_BLOCK.findall(text):
+        carousel = json.loads(block)
+        assert carousel["title"]
+        assert carousel["charts"]
+        for chart in carousel["charts"]:
+            assert chart["type"] == "line"
+            assert chart["x"]["key"]
+            assert chart["series"] and all(s["key"] for s in chart["series"])
+            assert chart["data"] and all(isinstance(row, dict) for row in chart["data"])
 
 
 @pytest.mark.parametrize("prompt_key", list(_PROMPTS))

@@ -11,7 +11,7 @@
 
 'use client'
 
-import { type FC, type MouseEvent, type ReactNode, useMemo, useRef, useState } from 'react'
+import { type FC, type MouseEvent, type ReactNode, useId, useMemo, useRef, useState } from 'react'
 import { CHART_WIDTH, chartHeight, plotBox } from './geometry'
 import { seriesColor } from './palette'
 import { toNumber } from './parse'
@@ -59,6 +59,7 @@ export const ResultChart: FC<{ spec: ChartSpec; truncation?: Truncation | null }
   const wrapRef = useRef<HTMLDivElement>(null)
   const [tooltip, setTooltip] = useState<Tooltip | null>(null)
   const [dataOpen, setDataOpen] = useState(false)
+  const dataId = useId()
 
   const tipHandlers = (text: string) => ({
     onMouseMove: (e: MouseEvent) => {
@@ -68,11 +69,11 @@ export const ResultChart: FC<{ spec: ChartSpec; truncation?: Truncation | null }
     onMouseLeave: () => setTooltip(null),
   })
 
-  const showLegend = spec.series.length > 1
+  const showLegend = spec.series.length > 1 && spec.type !== 'delta'
 
   return (
     <figure ref={wrapRef} className="result-chart" aria-label={`${spec.type} chart: ${spec.title}`}>
-      <ChartToolbar spec={spec} dataOpen={dataOpen} onToggleData={() => setDataOpen((open) => !open)} />
+      <ChartToolbar spec={spec} dataOpen={dataOpen} dataId={dataId} onToggleData={() => setDataOpen((open) => !open)} />
       {spec.kpis && <KpiTiles kpis={spec.kpis} />}
       <figcaption className="result-chart-head">
         <span className="result-chart-title">{spec.title}</span>
@@ -102,7 +103,7 @@ export const ResultChart: FC<{ spec: ChartSpec; truncation?: Truncation | null }
           Showing top {truncation.shown} of {truncation.total}
         </p>
       )}
-      {dataOpen && <ChartDataTable spec={spec} />}
+      {dataOpen && <ChartDataTable spec={spec} id={dataId} />}
       {tooltip && (
         <div
           role="tooltip"

@@ -39,7 +39,8 @@ export function renderBar({ spec, box, min, max, colors, fmt }: RenderInput): Ma
         tip,
       })
       if (seriesCount === 1) {
-        marks.push({ kind: 'text', x: center, y: Math.min(y, baselineY) - 5, text: formatValue(value, fmt), anchor: 'middle', variant: 'value' })
+        const labelY = value >= 0 ? Math.min(y, baselineY) - 5 : Math.max(y, baselineY) + 12
+        marks.push({ kind: 'text', x: center, y: labelY, text: formatValue(value, fmt), anchor: 'middle', variant: 'value' })
       }
     })
   })

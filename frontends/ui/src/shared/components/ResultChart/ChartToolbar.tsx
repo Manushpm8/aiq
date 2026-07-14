@@ -12,13 +12,15 @@ import type { ChartSpec } from './types'
 export const ChartToolbar: FC<{
   spec: ChartSpec
   dataOpen: boolean
+  dataId: string
   onToggleData: () => void
-}> = ({ spec, dataOpen, onToggleData }) => (
+}> = ({ spec, dataOpen, dataId, onToggleData }) => (
   <div className="result-chart-toolbar">
     <button
       type="button"
       className="result-chart-tool"
       aria-expanded={dataOpen}
+      aria-controls={dataId}
       onClick={onToggleData}
     >
       {dataOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}

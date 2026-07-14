@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from 'vitest'
-import { plotBox } from '../geometry'
+import { plotBox, projectY } from '../geometry'
 import type { ChartSpec } from '../types'
 import { renderBar } from './bar'
 import type { Mark, RenderInput } from './types'
@@ -29,6 +29,25 @@ describe('renderBar', () => {
     expect(rects(marks)).toHaveLength(2)
     expect(values(marks)).toHaveLength(2)
     expect(marks.some((m) => m.kind === 'text' && m.variant === 'unit')).toBe(true)
+  })
+
+  test('places a negative single-series value label below the zero baseline', () => {
+    const spec = {
+      type: 'bar',
+      title: 'T',
+      x: { key: 'c' },
+      series: [{ key: 'v' }],
+      data: [{ c: 'a', v: 50 }, { c: 'b', v: -30 }],
+    } as unknown as ChartSpec
+    const box = plotBox(290)
+    const marks = renderBar({ spec, box, min: -50, max: 100, colors: ['#0a0'], fmt: 'number' })
+    const labels = marks.filter((m) => m.kind === 'text' && m.variant === 'value')
+    expect(labels).toHaveLength(2)
+    const baselineY = projectY(0, box, -50, 100)
+    const positive = labels.find((m) => m.kind === 'text' && m.text === '50')
+    const negative = labels.find((m) => m.kind === 'text' && m.text === '-30')
+    expect(positive?.kind === 'text' && positive.y).toBeLessThan(baselineY)
+    expect(negative?.kind === 'text' && negative.y).toBeGreaterThan(baselineY)
   })
 
   test('grouped bars use one color per series and omit value labels', () => {
