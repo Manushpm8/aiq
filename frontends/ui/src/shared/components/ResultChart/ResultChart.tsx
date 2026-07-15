@@ -60,6 +60,7 @@ export const ResultChart: FC<{ spec: ChartSpec; truncation?: Truncation | null }
   const [tooltip, setTooltip] = useState<Tooltip | null>(null)
   const [dataOpen, setDataOpen] = useState(false)
   const dataId = useId()
+  const gradPrefix = `rc${dataId.replace(/:/g, '')}`
 
   const tipHandlers = (text: string) => ({
     onMouseMove: (e: MouseEvent) => {
@@ -96,7 +97,17 @@ export const ResultChart: FC<{ spec: ChartSpec; truncation?: Truncation | null }
         aria-label={`${spec.type} chart: ${spec.title}`}
         className="result-chart-svg"
       >
-        {layout.marks.map((mark, i) => renderMark(mark, i, tipHandlers))}
+        <defs>
+          {layout.marks.map((mark, i) =>
+            mark.kind === 'path' && mark.variant === 'area' ? (
+              <linearGradient key={i} id={`${gradPrefix}-area-${i}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={mark.color} stopOpacity={0.28} />
+                <stop offset="100%" stopColor={mark.color} stopOpacity={0} />
+              </linearGradient>
+            ) : null,
+          )}
+        </defs>
+        {layout.marks.map((mark, i) => renderMark(mark, i, tipHandlers, gradPrefix))}
       </svg>
       {truncation && (
         <p className="result-chart-note">
@@ -121,6 +132,7 @@ function renderMark(
   mark: Mark,
   key: number,
   tipHandlers: (text: string) => { onMouseMove: (e: MouseEvent) => void; onMouseLeave: () => void },
+  gradPrefix: string,
 ): ReactNode {
   switch (mark.kind) {
     case 'gridline':
@@ -152,7 +164,7 @@ function renderMark(
       )
     case 'path':
       return mark.variant === 'area' ? (
-        <path key={key} d={mark.d} fill={mark.color} className="result-chart-area" />
+        <path key={key} d={mark.d} fill={`url(#${gradPrefix}-area-${key})`} className="result-chart-area" />
       ) : (
         <path
           key={key}

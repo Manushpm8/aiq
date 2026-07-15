@@ -465,9 +465,6 @@ body {
 .result-chart-bar:hover {
   opacity: 0.82;
 }
-.result-chart-area {
-  fill-opacity: 0.15;
-}
 .result-chart-dot {
   transition: r 120ms ease;
 }
