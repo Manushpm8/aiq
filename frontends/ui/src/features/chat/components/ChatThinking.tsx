@@ -24,7 +24,7 @@ import { Flex, Text, AnimatedChevron, Spinner } from '@/adapters/ui'
 import { CheckCircle, Warning, Clock } from '@/adapters/ui/icons'
 import { SourceKindIcon } from '@/shared/components/Sources/SourceKindIcon'
 import { MarkdownRenderer } from '@/shared/components/MarkdownRenderer'
-import { type NodeState, ToolCallRow, getToolLabel, formatModelName, isKnownTool } from '@/shared/components/research'
+import { type NodeState, ToolCallRow, getToolLabel, isKnownTool } from '@/shared/components/research'
 import { getDataSourceKind, getDataSourceLabel } from '@/features/layout/data-sources'
 import type { SourceKind } from '@/shared/components/Sources/types'
 import { cn } from '@/shared/lib/cn'
@@ -79,17 +79,6 @@ const formatResponseDuration = (ms: number): string => {
   const hours = Math.floor(totalMinutes / 60)
   const minutes = totalMinutes % 60
   return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
-}
-
-const modelFaviconUrl = (model: string): string => {
-  const normalized = model.toLowerCase()
-  let domain = 'openai.com'
-  if (normalized.includes('claude') || normalized.includes('anthropic')) {
-    domain = 'claude.ai'
-  } else if (normalized.includes('nemotron') || normalized.includes('nvidia')) {
-    domain = 'nvidia.com'
-  }
-  return `https://ico.faviconkit.net/favicon/${domain}?sz=32`
 }
 
 /**
@@ -538,7 +527,6 @@ export const ChatThinking: FC<ChatThinkingProps> = ({
   isWaiting = false,
   enabledDataSources = [],
   messageFiles = [],
-  model,
   responseStartedAt,
   responseCompletedAt,
   embedded = false,
@@ -747,22 +735,6 @@ export const ChatThinking: FC<ChatThinkingProps> = ({
             gap="2.5"
             className="text-secondary hover:text-primary shrink-0 transition-colors"
           >
-            {model && (
-              <span className="flex shrink-0 items-center gap-1.5">
-                {/* eslint-disable-next-line @next/next/no-img-element -- FaviconKit serves provider favicons dynamically. */}
-                <img
-                  src={modelFaviconUrl(model)}
-                  alt=""
-                  aria-hidden="true"
-                  width={14}
-                  height={14}
-                  className="h-3.5 w-3.5 rounded-[3px] object-contain"
-                />
-                <Text kind="label/semibold/sm" className="text-secondary">
-                  {formatModelName(model)}
-                </Text>
-              </span>
-            )}
             {responseDuration && (
               <span className="flex shrink-0 items-center gap-1" aria-label="Total response time">
                 <Clock className="text-subtle h-3.5 w-3.5" />
@@ -771,7 +743,7 @@ export const ChatThinking: FC<ChatThinkingProps> = ({
                 </Text>
               </span>
             )}
-            {(model || responseDuration) && (
+            {responseDuration && (
               <span aria-hidden="true" className="bg-base h-3.5 w-px" />
             )}
             <Flex align="center" gap="1" className="pl-0.5">
