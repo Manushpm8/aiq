@@ -323,7 +323,7 @@ body {
   padding: 16px 18px 12px;
   border: 1px solid var(--border-color-base);
   border-radius: 13px;
-  background-color: var(--background-color-surface-raised);
+  background-color: transparent;
 }
 .result-chart-toolbar {
   position: absolute;
