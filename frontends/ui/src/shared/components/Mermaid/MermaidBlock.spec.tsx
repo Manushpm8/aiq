@@ -81,9 +81,12 @@ describe('MermaidBlock', () => {
 
     await userEvent.click(screen.getByLabelText('Expand to fullscreen'))
     expect(screen.getByLabelText('Exit fullscreen')).toBeInTheDocument()
+    const dialog = screen.getByRole('dialog', { name: 'Diagram fullscreen view' })
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
 
     await userEvent.keyboard('{Escape}')
     expect(screen.getByLabelText('Expand to fullscreen')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   test('omits zoom controls when the diagram has no viewBox', async () => {

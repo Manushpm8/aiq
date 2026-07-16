@@ -17,6 +17,7 @@ import type { FC, ReactNode } from 'react'
 import { useId } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { Flex, AnimatedChevron } from '@/adapters/ui'
+import { useReducedMotion } from '@/hooks/use-reduced-motion'
 
 export interface CollapsibleBlockProps {
   /** Leading glyph rendered before the title (status atom, source icon, etc.). */
@@ -44,6 +45,7 @@ export const CollapsibleBlock: FC<CollapsibleBlockProps> = ({
   children,
 }) => {
   const regionId = useId()
+  const prefersReducedMotion = useReducedMotion()
   const header = (
     <>
       <Flex align="center" gap="2" className="min-w-0">
@@ -82,7 +84,7 @@ export const CollapsibleBlock: FC<CollapsibleBlockProps> = ({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
             className="overflow-hidden"
           >
             {children}

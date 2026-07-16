@@ -182,6 +182,9 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ code, fallback }) => {
 
   return (
     <div
+      role={fullscreen ? 'dialog' : undefined}
+      aria-modal={fullscreen ? true : undefined}
+      aria-label={fullscreen ? 'Diagram fullscreen view' : undefined}
       className={
         fullscreen
           ? 'bg-surface-raised fixed inset-0 z-[60] m-0 overflow-hidden border-0'
