@@ -450,13 +450,17 @@ export const useChatStore = create<ChatStore>()(
         ...initialState,
 
         setCurrentUser: (userId: string | null) => {
-          const { conversations, currentConversation } = get()
+          const { conversations, currentConversation, currentUserId: previousUserId } = get()
 
           // Clear current conversation if:
           // 1. User is logging out (userId is null), OR
           // 2. User changed to a different user whose conversations don't include current one
           const shouldClearCurrent =
             currentConversation && (userId === null || currentConversation.userId !== userId)
+
+          if (userId !== previousUserId) {
+            useLayoutStore.getState().resetComposerState()
+          }
 
           // Find first conversation for new user to auto-select
           const userConversations = userId ? conversations.filter((c) => c.userId === userId) : []
@@ -2406,7 +2410,7 @@ export const useChatStore = create<ChatStore>()(
         hydrateDeepResearchFromMessage: (jobId: string): boolean => {
           const { currentConversation, conversations, currentUserId } = get()
           const findInConversation = (conv?: Conversation | null): ChatMessage | undefined =>
-            conv?.messages.find(
+            [...(conv?.messages ?? [])].reverse().find(
               (m) =>
                 m.deepResearchJobId === jobId &&
                 ((m.deepResearchToolCalls?.length ?? 0) > 0 ||

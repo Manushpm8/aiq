@@ -201,6 +201,23 @@ describe('useLayoutStore', () => {
 
       expect(useLayoutStore.getState().selectedModel).toBe('gpt-5.4')
     })
+
+    test('setSelectedModel(undefined) restores the backend default', () => {
+      useLayoutStore.getState().setSelectedModel('gpt-5.4')
+
+      useLayoutStore.getState().setSelectedModel(undefined)
+
+      expect(useLayoutStore.getState().selectedModel).toBeUndefined()
+    })
+
+    test('resetComposerState clears the draft and selected model', () => {
+      useLayoutStore.setState({ promptDraft: 'half a question', selectedModel: 'gpt-5.4' })
+
+      useLayoutStore.getState().resetComposerState()
+
+      expect(useLayoutStore.getState().promptDraft).toBeNull()
+      expect(useLayoutStore.getState().selectedModel).toBeUndefined()
+    })
   })
 
   describe('setResearchPanelTab', () => {

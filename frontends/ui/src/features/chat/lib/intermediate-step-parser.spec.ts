@@ -34,6 +34,13 @@ describe('isLLMModel', () => {
       expect(isLLMModel(name)).toBe(false)
     }
   )
+
+  test.each(['tool:web/search', ' Tool: web/search', 'function start: llm/call'])(
+    'treats case- or whitespace-variant tool/function prefix %s as not a model',
+    (name) => {
+      expect(isLLMModel(name)).toBe(false)
+    }
+  )
 })
 
 describe('folded-text step predicates', () => {

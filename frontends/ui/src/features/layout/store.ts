@@ -126,8 +126,11 @@ export const useLayoutStore = create<LayoutStore>()(
       setPromptDraft: (value: string | null) =>
         set({ promptDraft: value }, false, 'setPromptDraft'),
 
-      setSelectedModel: (model: string) =>
+      setSelectedModel: (model: string | undefined) =>
         set({ selectedModel: model }, false, 'setSelectedModel'),
+
+      resetComposerState: () =>
+        set({ promptDraft: null, selectedModel: undefined }, false, 'resetComposerState'),
 
       fetchDataSources: async (authToken?: string) => {
         set({ dataSourcesLoading: true, dataSourcesError: null }, false, 'fetchDataSources/start')
