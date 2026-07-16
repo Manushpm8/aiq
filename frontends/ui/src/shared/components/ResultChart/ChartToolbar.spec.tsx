@@ -27,12 +27,14 @@ describe('ChartToolbar', () => {
     )
     const toggle = screen.getByRole('button', { name: 'Show data' })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(toggle).toHaveAttribute('aria-controls', 'chart-data-1')
+    expect(toggle).not.toHaveAttribute('aria-controls')
     fireEvent.click(toggle)
     expect(onToggleData).toHaveBeenCalledOnce()
 
     rerender(<ChartToolbar spec={spec} dataOpen dataId="chart-data-1" onToggleData={onToggleData} />)
-    expect(screen.getByRole('button', { name: 'Hide data' })).toHaveAttribute('aria-expanded', 'true')
+    const opened = screen.getByRole('button', { name: 'Hide data' })
+    expect(opened).toHaveAttribute('aria-expanded', 'true')
+    expect(opened).toHaveAttribute('aria-controls', 'chart-data-1')
   })
 
   test('download triggers a CSV blob download', () => {

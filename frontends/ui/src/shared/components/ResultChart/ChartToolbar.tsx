@@ -20,7 +20,7 @@ export const ChartToolbar: FC<{
       type="button"
       className="result-chart-tool"
       aria-expanded={dataOpen}
-      aria-controls={dataId}
+      aria-controls={dataOpen ? dataId : undefined}
       onClick={onToggleData}
     >
       {dataOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}

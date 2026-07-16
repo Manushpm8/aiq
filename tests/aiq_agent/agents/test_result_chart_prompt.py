@@ -55,10 +55,12 @@ def test_prompt_defines_the_chart_contract(prompt_key: str) -> None:
 @pytest.mark.parametrize("prompt_key", list(_PROMPTS))
 def test_prompt_carousel_examples_match_the_schema(prompt_key: str) -> None:
     text = _PROMPTS[prompt_key].read_text()
-    for block in _CAROUSEL_BLOCK.findall(text):
+    blocks = _CAROUSEL_BLOCK.findall(text)
+    assert blocks, f"{prompt_key} prompt has no ```chart-carousel example"
+    for block in blocks:
         carousel = json.loads(block)
         assert carousel["title"]
-        assert carousel["charts"]
+        assert len(carousel["charts"]) >= 2
         for chart in carousel["charts"]:
             assert chart["type"] == "line"
             assert chart["x"]["key"]

@@ -92,4 +92,14 @@ describe('ResultChart', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show data' }))
     expect(screen.getByRole('region', { name: 'Chart data' })).toBeInTheDocument()
   })
+
+  test('references the data region only while it is mounted', () => {
+    render(<ResultChart spec={spec()} />)
+    const collapsed = screen.getByRole('button', { name: 'Show data' })
+    expect(collapsed).not.toHaveAttribute('aria-controls')
+    fireEvent.click(collapsed)
+    const region = screen.getByRole('region', { name: 'Chart data' })
+    const opened = screen.getByRole('button', { name: 'Hide data' })
+    expect(opened.getAttribute('aria-controls')).toBe(region.getAttribute('id'))
+  })
 })
