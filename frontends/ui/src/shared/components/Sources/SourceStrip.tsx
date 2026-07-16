@@ -61,6 +61,7 @@ export function SourceStrip({ sources, previewCount = 4, className }: SourceStri
 
   const hasMore = sources.length > previewCount
   const visible = expanded || !hasMore ? sources : sources.slice(0, previewCount - 1)
+  const hiddenCount = sources.length - (previewCount - 1)
 
   return (
     <section className={cn('space-y-2', className)} aria-label="Sources">
@@ -71,15 +72,15 @@ export function SourceStrip({ sources, previewCount = 4, className }: SourceStri
         {visible.map((s, i) => (
           <SourceCard key={s.id} source={s} index={i} />
         ))}
-        {hasMore && !expanded && (
+        {hasMore && (
           <button
             type="button"
-            onClick={() => setExpanded(true)}
+            onClick={() => setExpanded((prev) => !prev)}
             aria-expanded={expanded}
             className="bg-surface-raised border-base text-secondary hover:bg-surface-sunken hover:text-primary flex flex-col items-start justify-center gap-1 rounded-[var(--radius-card)] border p-3 text-sm transition-colors"
           >
-            <span className="font-medium">+{sources.length - (previewCount - 1)} more</span>
-            <span className="text-subtle text-xs">View all sources</span>
+            <span className="font-medium">{expanded ? 'Show fewer' : `+${hiddenCount} more`}</span>
+            <span className="text-subtle text-xs">{expanded ? 'Collapse sources' : 'View all sources'}</span>
           </button>
         )}
       </div>

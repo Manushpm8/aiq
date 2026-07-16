@@ -112,6 +112,12 @@ describe('renumberOrderedLists', () => {
     const md = '1. one\n2. two\n   1. nested'
     expect(renumberOrderedLists(md)).toBe(md)
   })
+
+  test('renumber + nest-bullets leave fenced content untouched', () => {
+    const body = '1. one\n```chart\n1. not-a-list-item\n- not-a-bullet\n```\n1. two'
+    expect(renumberOrderedLists(body)).toBe('1. one\n```chart\n1. not-a-list-item\n- not-a-bullet\n```\n2. two')
+    expect(nestBulletsUnderOrderedItems(body)).toBe(body)
+  })
 })
 
 describe('splitReferences', () => {
@@ -193,11 +199,5 @@ describe('tabularizeEntityLines', () => {
     expect(out).toBe(body)
     expect(out).not.toContain('| Item | Value |')
     expect(out).toContain('"count": 5120')
-  })
-
-  test('renumber + nest-bullets leave fenced content untouched', () => {
-    const body = '1. one\n```chart\n1. not-a-list-item\n- not-a-bullet\n```\n1. two'
-    expect(renumberOrderedLists(body)).toBe('1. one\n```chart\n1. not-a-list-item\n- not-a-bullet\n```\n2. two')
-    expect(nestBulletsUnderOrderedItems(body)).toBe(body)
   })
 })

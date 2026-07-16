@@ -37,6 +37,20 @@ describe('SourceStrip', () => {
     expect(screen.getByText('Source 5')).toBeInTheDocument()
   })
 
+  test('keeps a stable trigger that toggles and reflects the disclosure state', () => {
+    render(<SourceStrip sources={makeSources(6)} previewCount={4} />)
+    const trigger = screen.getByRole('button', { name: /more/ })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('Show fewer')).toBeInTheDocument()
+
+    fireEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Source 5')).not.toBeInTheDocument()
+  })
+
   test('links cards that have a url', () => {
     render(<SourceStrip sources={makeSources(1)} />)
     expect(screen.getByRole('link')).toHaveAttribute('href', 'https://site0.com')
