@@ -96,12 +96,13 @@ export const mapFunctionToCategory = (functionName: string): IntermediateStepCat
  * @returns True if this appears to be an LLM model name
  */
 export const isLLMModel = (name: string): boolean => {
-  if (name.startsWith('Function') || name.startsWith('Tool:')) return false
-  if (name.includes('/')) return true
+  const normalized = name.trim()
+  if (/^(?:Function|Tool:)/i.test(normalized)) return false
+  if (normalized.includes('/')) return true
 
   // Some providers report only the final model segment in intermediate traces.
   return /^(?:llm(?:[_-]call)?|chat[_-]model|gpt(?:-|$)|claude(?:-|$)|nemotron(?:-|$)|llama(?:-|$)|mistral(?:-|$)|o\d(?:-|$))/i.test(
-    name.trim()
+    normalized
   )
 }
 

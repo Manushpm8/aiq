@@ -11,6 +11,7 @@ const mockLayoutState = vi.hoisted(() => ({
   enabledDataSourceIds: ['web_search'],
   availableDataSources: [{ id: 'web_search' }, { id: 'knowledge_base', requires_auth: true }],
   setEnabledDataSources: vi.fn(),
+  resetComposerState: vi.fn(),
 }))
 const mockDeepResearchApi = vi.hoisted(() => ({
   getJobStatus: vi.fn(),
@@ -41,6 +42,7 @@ describe('useChatStore', () => {
     localStorage.removeItem(STORAGE_KEY)
     mockLayoutState.closeRightPanel.mockClear()
     mockLayoutState.setEnabledDataSources.mockClear()
+    mockLayoutState.resetComposerState.mockClear()
     mockLayoutState.enabledDataSourceIds = ['web_search']
     mockLayoutState.availableDataSources = [
       { id: 'web_search' },
@@ -178,6 +180,30 @@ describe('useChatStore', () => {
       useChatStore.getState().setCurrentUser(null)
 
       expect(useChatStore.getState().currentConversation).toBeNull()
+    })
+
+    test('clears layout composer state on account switch', () => {
+      useChatStore.setState({ currentUserId: 'user-1' })
+
+      useChatStore.getState().setCurrentUser('user-2')
+
+      expect(mockLayoutState.resetComposerState).toHaveBeenCalledTimes(1)
+    })
+
+    test('clears layout composer state on logout', () => {
+      useChatStore.setState({ currentUserId: 'user-1' })
+
+      useChatStore.getState().setCurrentUser(null)
+
+      expect(mockLayoutState.resetComposerState).toHaveBeenCalledTimes(1)
+    })
+
+    test('does not clear composer state when the user is unchanged', () => {
+      useChatStore.setState({ currentUserId: 'user-1' })
+
+      useChatStore.getState().setCurrentUser('user-1')
+
+      expect(mockLayoutState.resetComposerState).not.toHaveBeenCalled()
     })
   })
 

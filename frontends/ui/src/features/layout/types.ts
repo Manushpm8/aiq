@@ -90,8 +90,10 @@ export interface LayoutActions {
   setTheme: (theme: ThemeMode) => void
   /** Set the in-progress composer draft (null clears it) */
   setPromptDraft: (value: string | null) => void
-  /** Set the final-response model for subsequent turns */
-  setSelectedModel: (model: string) => void
+  /** Set the final-response model for subsequent turns (undefined restores the backend default) */
+  setSelectedModel: (model: string | undefined) => void
+  /** Clear composer state (draft and selected model) on logout or account switch */
+  resetComposerState: () => void
   /** Fetch data sources from API. Only web_search is enabled by default */
   fetchDataSources: (authToken?: string) => Promise<void>
   /**

@@ -114,6 +114,38 @@ describe('deepResearchToThinkingSteps', () => {
     expect(children).toHaveLength(1)
   })
 
+  test('collapses retried explanation tool calls, including their folded blocks', () => {
+    const explain = (id: string, timestamp: string): DeepResearchToolCall =>
+      tool({
+        id,
+        name: 'explain_findings',
+        agentId: 'a1',
+        input: { metric: 'churn' },
+        output: 'Key drivers: recent usage.',
+        timestamp: new Date(timestamp),
+      })
+    const steps = deepResearchToThinkingSteps(
+      [agent({ id: 'a1' })],
+      [explain('e1', '2026-06-25T00:00:01Z'), explain('e2', '2026-06-25T00:00:02Z')]
+    )
+    expect(steps.filter((s) => s.category === 'tools')).toHaveLength(1)
+    expect(steps.filter((s) => s.functionName === EXPLANATION_FUNCTION_NAME)).toHaveLength(1)
+  })
+
+  test('does not merge identical tool calls that belong to different agents', () => {
+    const steps = deepResearchToThinkingSteps(
+      [
+        agent({ id: 'a1', name: 'planner', startedAt: new Date('2026-06-25T00:00:00Z') }),
+        agent({ id: 'a2', name: 'researcher', startedAt: new Date('2026-06-25T00:01:00Z') }),
+      ],
+      [
+        tool({ id: 't-a1', name: 'web_search_tool', agentId: 'a1', input: { query: 'same' }, timestamp: new Date('2026-06-25T00:00:05Z') }),
+        tool({ id: 't-a2', name: 'web_search_tool', agentId: 'a2', input: { query: 'same' }, timestamp: new Date('2026-06-25T00:01:05Z') }),
+      ]
+    )
+    expect(steps.filter((s) => s.category === 'tools')).toHaveLength(2)
+  })
+
   test('never merges agent phase heads, even with the same name', () => {
     const steps = deepResearchToThinkingSteps(
       [

@@ -31,20 +31,34 @@ const ms = (value: Date | string): number => new Date(value).getTime()
 
 const collapseRepeats = (steps: ThinkingStep[]): ThinkingStep[] => {
   const out: ThinkingStep[] = []
+  const isFold = (step: ThinkingStep): boolean => step.category === 'agents' && !step.isTopLevel
   const sameCall = (a: ThinkingStep, b: ThinkingStep): boolean =>
-    a.category === 'tools' &&
-    b.category === 'tools' &&
     a.isTopLevel === b.isTopLevel &&
     a.functionName === b.functionName &&
     (a.argSummary ?? '') === (b.argSummary ?? '')
+  const sameFold = (a: ThinkingStep, b: ThinkingStep): boolean =>
+    a.functionName === b.functionName && a.content === b.content
 
+  let lastToolIndex = -1
   for (const step of steps) {
-    const prev = out[out.length - 1]
-    if (prev && sameCall(prev, step)) {
-      out[out.length - 1] = { ...step, id: prev.id }
-    } else {
-      out.push(step)
+    if (step.category === 'tools') {
+      const lastTool = lastToolIndex >= 0 ? out[lastToolIndex] : undefined
+      if (lastTool && sameCall(lastTool, step)) {
+        out[lastToolIndex] = { ...step, id: lastTool.id }
+      } else {
+        out.push(step)
+        lastToolIndex = out.length - 1
+      }
+      continue
     }
+    if (isFold(step)) {
+      const prev = out[out.length - 1]
+      if (prev && isFold(prev) && sameFold(prev, step)) continue
+      out.push(step)
+      continue
+    }
+    out.push(step)
+    lastToolIndex = -1
   }
   return out
 }
