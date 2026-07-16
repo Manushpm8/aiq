@@ -178,6 +178,22 @@ describe('AgentCard', () => {
       expect(container.querySelector('.tool-call-row-dot .status-dot-error')).toBeTruthy()
       expect(container.querySelector('.tool-call-row-dot .status-dot-running')).toBeNull()
     })
+
+    test('a retried complete replaces a prior error row for the same call', () => {
+      const { container } = render(
+        <AgentCard
+          agent={createAgent({
+            toolCalls: [
+              createToolCall({ id: 'tc-1', status: 'error', input: { query: 'q1' } }),
+              createToolCall({ id: 'tc-1', status: 'complete', input: { query: 'q1' } }),
+            ],
+          })}
+        />
+      )
+
+      expect(screen.getByText('1/1')).toBeInTheDocument()
+      expect(container.querySelector('.tool-call-row-dot .status-dot-error')).toBeNull()
+    })
   })
 
   describe('accessibility', () => {

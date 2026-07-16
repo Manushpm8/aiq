@@ -160,14 +160,16 @@ describe('AgentResponse', () => {
     expect(mockImportJobStream).not.toHaveBeenCalled()
   })
 
-  test('surfaces a report-load error as an inline alert and offers retry', () => {
+  test('surfaces a report-load error and retries loading the report', async () => {
+    const user = userEvent.setup()
     hookState.error = 'network timeout'
 
     render(<AgentResponse content="Response" showViewReport={true} jobId="job-1" />)
 
     const alert = screen.getByRole('alert')
     expect(alert).toHaveTextContent('network timeout')
-    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /retry/i }))
+    expect(mockLoadResearchPanelTab).toHaveBeenCalledWith('job-1', 'report')
   })
 
   test('strips a baked references block from the rendered body and lists sources', () => {

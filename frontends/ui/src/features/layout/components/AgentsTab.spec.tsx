@@ -85,6 +85,23 @@ describe('AgentsTab', () => {
       expect(screen.getByText('2')).toBeInTheDocument()
     })
 
+    test('counts a running orphan tool call toward the running header', () => {
+      useChatStore.setState({
+        deepResearchToolCalls: [
+          createToolCall({
+            id: 't1',
+            name: 'database_query',
+            status: 'running',
+            input: { question: 'count of orders' },
+          }),
+        ],
+      })
+
+      render(<AgentsTab />)
+
+      expect(screen.getByText('1 running')).toBeInTheDocument()
+    })
+
     test('renders a tool call with no owning agent', () => {
       useChatStore.setState({
         deepResearchToolCalls: [

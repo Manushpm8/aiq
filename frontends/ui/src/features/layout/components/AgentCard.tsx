@@ -62,20 +62,17 @@ const agentNodeState = (status: AgentInfo['status']) => {
 }
 
 /**
- * Deduplicate tool calls by their argument summary (or name), keeping the most
- * recent completed status so a re-run of the same query collapses to one row.
+ * Deduplicate tool calls by their argument summary (or name), keeping the latest
+ * status so a re-run of the same query collapses to one row. `Map.set` on an
+ * existing key updates the value while preserving its original iteration
+ * position, so the row stays put and always reflects the most recent status.
  */
 const dedupeToolCalls = (toolCalls: DeepResearchToolCall[]): DeepResearchToolCall[] => {
   const seen = new Map<string, DeepResearchToolCall>()
   for (const tc of toolCalls) {
     const summary = getToolArgSummary(tc.name, tc.input) ?? ''
     const key = summary ? `${tc.name}:${summary}` : `${tc.name}::${tc.id}`
-    const existing = seen.get(key)
-    if (!existing) {
-      seen.set(key, tc)
-    } else if (tc.status !== 'running' && existing.status === 'running') {
-      seen.set(key, tc)
-    }
+    seen.set(key, tc)
   }
   return Array.from(seen.values())
 }

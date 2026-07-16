@@ -314,6 +314,7 @@ describe('AgentPrompt', () => {
     render(<AgentPrompt id="p" type="approval" content={content} isResponded />)
 
     expect(screen.queryByText('Plan approved')).not.toBeInTheDocument()
+    expect(screen.queryByText('Plan rejected')).not.toBeInTheDocument()
   })
 
   test('re-expands the collapsed block when the header toggle is clicked', async () => {

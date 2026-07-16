@@ -223,6 +223,9 @@ export const ChatArea: FC<ChatAreaProps> = memo(function ChatArea({
       ref={scrollContainerRef}
       direction="col"
       className="scrollbar-hide flex-1 overflow-y-auto"
+      role="log"
+      aria-live="polite"
+      aria-relevant="additions text"
       aria-label="Chat messages"
     >
       {isEmpty ? (

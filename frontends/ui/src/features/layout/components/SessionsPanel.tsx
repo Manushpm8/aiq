@@ -726,15 +726,13 @@ const bucketLabel = (date: Date, now: Date): string => {
 }
 
 /**
- * Sorts sessions newest-first and groups them into ordered relative-date buckets.
+ * Groups sessions into ordered relative-date buckets, preserving the caller's
+ * order within and across buckets (the caller sorts by session recency).
  */
 const groupSessionsByDate = (sessions: Session[]): SessionGroup[] => {
   const now = new Date()
-  const ordered = [...sessions].sort(
-    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-  )
   const groups = new Map<string, Session[]>()
-  for (const session of ordered) {
+  for (const session of sessions) {
     const label = bucketLabel(new Date(session.date), now)
     const bucket = groups.get(label)
     if (bucket) {

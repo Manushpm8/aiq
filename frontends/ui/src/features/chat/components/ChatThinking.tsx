@@ -18,7 +18,7 @@
 
 'use client'
 
-import { type FC, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { type FC, type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { Flex, Text, AnimatedChevron, Spinner } from '@/adapters/ui'
 import { CheckCircle, Warning, Clock } from '@/adapters/ui/icons'
@@ -199,8 +199,13 @@ export const dedupeNestedToolSteps = (steps: ThinkingStep[]): ThinkingStep[] => 
 
   // Step 2: collapse remaining duplicate tool rows within the same tool label +
   // input summary, keeping the top-level / completed copy.
-  const rank = (s: ThinkingStep, index: number): number =>
-    (s.isTopLevel ? 1e6 : 0) + (s.status === 'success' || s.isComplete ? 1e2 : 0) + index
+  const rank = (s: ThinkingStep, index: number): [number, number, number] => [
+    s.isTopLevel ? 1 : 0,
+    s.status === 'success' || s.isComplete ? 1 : 0,
+    index,
+  ]
+  const rankIsHigher = (a: [number, number, number], b: [number, number, number]): boolean =>
+    a[0] !== b[0] ? a[0] > b[0] : a[1] !== b[1] ? a[1] > b[1] : a[2] > b[2]
 
   const groups = new Map<string, number[]>()
   enriched.forEach((s, i) => {
@@ -215,7 +220,8 @@ export const dedupeNestedToolSteps = (steps: ThinkingStep[]): ThinkingStep[] => 
   for (const indices of groups.values()) {
     if (indices.length < 2) continue
     let best = indices[0]
-    for (const i of indices) if (rank(enriched[i], i) > rank(enriched[best], best)) best = i
+    for (const i of indices)
+      if (rankIsHigher(rank(enriched[i], i), rank(enriched[best], best))) best = i
     for (const i of indices) if (i !== best) drop.add(i)
   }
 
@@ -340,6 +346,7 @@ const CollapsibleText: FC<{
   const [open, setOpen] = useState(defaultOpen)
   const userToggledRef = useRef(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const contentId = useId()
 
   useEffect(() => {
     if (userToggledRef.current) return
@@ -365,6 +372,7 @@ const CollapsibleText: FC<{
         type="button"
         onClick={toggle}
         aria-expanded={open}
+        aria-controls={contentId}
         className="thinking-reasoning-toggle"
       >
         <Text kind="label/regular/xs" className="thinking-reasoning-label">
@@ -375,6 +383,7 @@ const CollapsibleText: FC<{
       <AnimatePresence initial={false}>
         {open && (
           <motion.div
+            id={contentId}
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
@@ -414,9 +423,16 @@ const PhaseRow: FC<{
   index: number
 }> = ({ phase, state, duration, defaultOpen, isActive, index }) => {
   const [open, setOpen] = useState(defaultOpen)
+  const userToggledRef = useRef(false)
+  const substepsId = useId()
   const childCount = phase.children.length
   const hasChildren = childCount > 0
   const reflectionNote = phase.reflection
+
+  useEffect(() => {
+    if (userToggledRef.current) return
+    setOpen(defaultOpen)
+  }, [defaultOpen])
 
   const headInner: ReactNode = (
     <>
@@ -455,8 +471,12 @@ const PhaseRow: FC<{
       {hasChildren ? (
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => {
+            userToggledRef.current = true
+            setOpen((v) => !v)
+          }}
           aria-expanded={open}
+          aria-controls={substepsId}
           className="thinking-phase-head"
         >
           {headInner}
@@ -482,6 +502,7 @@ const PhaseRow: FC<{
       <AnimatePresence initial={false}>
         {open && hasChildren && (
           <motion.ul
+            id={substepsId}
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}

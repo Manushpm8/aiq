@@ -190,7 +190,9 @@ export const AgentPrompt: FC<AgentPromptProps> = ({
         ? (choiceItems.find((choice) => choice.value === response)?.label ?? response)
         : response
 
-  const approved = isApprovalPrompt && (response ? !/reject/i.test(response) : false)
+  const approvalDecision: 'approve' | 'reject' | null =
+    isApprovalPrompt && response ? (/reject/i.test(response) ? 'reject' : 'approve') : null
+  const approved = approvalDecision === 'approve'
 
   const choiceItemsRef = useRef(choiceItems)
   choiceItemsRef.current = choiceItems
@@ -254,9 +256,11 @@ export const AgentPrompt: FC<AgentPromptProps> = ({
   )
 
   const decisionSummary = isApprovalPrompt
-    ? approved
+    ? approvalDecision === 'approve'
       ? 'Plan approved'
-      : 'Plan rejected'
+      : approvalDecision === 'reject'
+        ? 'Plan rejected'
+        : null
     : (displayResponse ?? null)
 
   const headerMeta =
@@ -365,7 +369,9 @@ export const AgentPrompt: FC<AgentPromptProps> = ({
 
         {isResponded &&
           (isApprovalPrompt ? (
-            <ApprovalReceipt approved={approved} />
+            approvalDecision ? (
+              <ApprovalReceipt approved={approved} />
+            ) : null
           ) : (
             <ResponseDisplay response={displayResponse} />
           ))}

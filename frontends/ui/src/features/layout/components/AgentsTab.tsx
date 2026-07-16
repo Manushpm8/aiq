@@ -44,7 +44,10 @@ export const AgentsTab: FC = () => {
   )
 
   const isEmpty = deepResearchAgents.length === 0 && deepResearchToolCalls.length === 0
-  const runningCount = deepResearchAgents.filter((a) => a.status === 'running').length
+  const runningCount = useMemo(
+    () => steps.filter((s) => s.isTopLevel && s.status === 'running').length,
+    [steps]
+  )
   const renderedGroupCount = useMemo(() => steps.filter((s) => s.isTopLevel).length, [steps])
 
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -53,7 +56,7 @@ export const AgentsTab: FC = () => {
     if (!el || runningCount === 0) return
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
     if (nearBottom) el.scrollTop = el.scrollHeight
-  }, [steps.length, runningCount])
+  }, [steps, runningCount])
 
   return (
     <Flex direction="col" gap="4" className="h-full min-h-0">

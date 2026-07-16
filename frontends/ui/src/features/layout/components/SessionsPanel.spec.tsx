@@ -144,6 +144,22 @@ describe('SessionsPanel', () => {
     expect(screen.getByText('Previous 30 Days')).toBeInTheDocument()
   })
 
+  test('preserves the caller session order within a bucket instead of re-sorting by date', () => {
+    const now = Date.now()
+    render(
+      <SessionsPanel
+        sessions={[
+          { id: 'older', title: 'Older today', date: new Date(now - 2 * 60_000) },
+          { id: 'newer', title: 'Newer today', date: new Date(now - 60_000) },
+        ]}
+      />
+    )
+
+    const older = screen.getByText('Older today')
+    const newer = screen.getByText('Newer today')
+    expect(older.compareDocumentPosition(newer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   test('shows empty state when no sessions', () => {
     render(<SessionsPanel sessions={[]} />)
 

@@ -233,8 +233,8 @@ describe('DataSourcesPanel', () => {
     const { container } = render(<DataSourcesPanel />)
 
     // Push panel keeps content mounted but collapses to zero width and marks
-    // itself aria-hidden when closed.
-    expect(container.querySelector('[aria-hidden="true"]')).toBeInTheDocument()
+    // its wrapper div aria-hidden when closed.
+    expect(container.querySelector('div[aria-hidden="true"]')).toBeInTheDocument()
   })
 
   test('renders all sources toggle', () => {

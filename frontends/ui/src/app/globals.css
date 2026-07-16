@@ -728,7 +728,7 @@ body {
   --color-agent-danger-deep: #c2363b;
 }
 
-@keyframes assistantTurnIn {
+@keyframes assistant-turn-in {
   from {
     opacity: 0;
     transform: translateY(6px);
@@ -789,7 +789,7 @@ body {
   display: inline-flex;
 }
 .thinking-dots > span {
-  animation: thinkingDot 1.4s var(--ease-premium) infinite;
+  animation: thinking-dot 1.4s var(--ease-premium) infinite;
 }
 .thinking-dots > span:nth-child(2) {
   animation-delay: 0.18s;
@@ -797,7 +797,7 @@ body {
 .thinking-dots > span:nth-child(3) {
   animation-delay: 0.36s;
 }
-@keyframes thinkingDot {
+@keyframes thinking-dot {
   0%,
   80%,
   100% {
@@ -871,7 +871,7 @@ button.thinking-phase-head:hover {
 }
 
 /* ---- Active phase indeterminate progress ------------------------------------ */
-@keyframes thinkSweep {
+@keyframes think-sweep {
   from {
     transform: translateX(-110%);
   }
@@ -895,7 +895,13 @@ button.thinking-phase-head:hover {
   width: 32%;
   border-radius: 999px;
   background: linear-gradient(90deg, transparent, var(--text-color-secondary), transparent);
-  animation: thinkSweep 1.6s var(--ease-premium) infinite;
+  animation: think-sweep 1.6s var(--ease-premium) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dots > span,
+  .thinking-progress::after {
+    animation: none;
+  }
 }
 
 /* ---- Model reasoning / reflection / explanation shown collapsibly ----------- */
@@ -945,7 +951,7 @@ button.thinking-phase-head:hover {
   font-style: italic;
   line-height: 1.55;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .thinking-reflection-note {
   margin: 0.25rem 0.4rem 0.35rem 1.95rem;
@@ -1009,7 +1015,7 @@ button.thinking-phase-head:hover {
 
 /* ---- Answer + agent response ------------------------------------------------- */
 .agent-final-response {
-  animation: assistantTurnIn var(--dur-mid) var(--ease-premium);
+  animation: assistant-turn-in var(--dur-mid) var(--ease-premium);
 }
 .agent-final-meta {
   color: var(--text-color-subtle);
@@ -1020,7 +1026,7 @@ button.thinking-phase-head:hover {
   opacity: 1;
 }
 
-@keyframes answerBlockReveal {
+@keyframes answer-block-reveal {
   from {
     opacity: 0;
     transform: translateY(6px);
@@ -1032,7 +1038,7 @@ button.thinking-phase-head:hover {
 }
 @media (prefers-reduced-motion: no-preference) {
   .markdown-content.answer-reveal > * {
-    animation: answerBlockReveal 0.45s var(--ease-premium, cubic-bezier(0.22, 1, 0.36, 1)) both;
+    animation: answer-block-reveal 0.45s var(--ease-premium, cubic-bezier(0.22, 1, 0.36, 1)) both;
   }
   .markdown-content.answer-reveal > *:nth-child(1) {
     animation-delay: 0s;
@@ -1367,7 +1373,7 @@ button.thinking-phase-head:hover {
 }
 
 .assistant-turn {
-  animation: assistantTurnIn var(--dur-mid) var(--ease-premium);
+  animation: assistant-turn-in var(--dur-mid) var(--ease-premium);
 }
 
 .assistant-turn-active .assistant-lane-glow,
