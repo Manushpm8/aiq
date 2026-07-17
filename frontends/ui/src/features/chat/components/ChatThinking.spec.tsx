@@ -4,7 +4,7 @@
 import { render, screen } from '@/test-utils'
 import userEvent from '@testing-library/user-event'
 import { describe, test, expect } from 'vitest'
-import { ChatThinking } from './ChatThinking'
+import { ChatThinking, dedupeNestedToolSteps } from './ChatThinking'
 import type { ThinkingStep } from '../types'
 
 const createStep = (overrides: Partial<ThinkingStep> = {}): ThinkingStep => ({
@@ -100,6 +100,49 @@ describe('ChatThinking', () => {
 
       // Only the tool phase is counted; the folded notes are not their own steps.
       expect(screen.getByText('1 step')).toBeInTheDocument()
+    })
+
+    test('renders nothing for a reflection-only stream (it produces no phases)', () => {
+      render(
+        <ChatThinking
+          steps={[createStep({ id: 'r', functionName: '__reflection__', content: 'looks good' })]}
+          isThinking={false}
+        />
+      )
+
+      expect(screen.queryByText('Done')).not.toBeInTheDocument()
+      expect(screen.queryByText(/\bstep\b/)).not.toBeInTheDocument()
+    })
+  })
+
+  describe('dedupeNestedToolSteps', () => {
+    test('keeps a distinct nested call to the same tool as a top-level call', () => {
+      const out = dedupeNestedToolSteps([
+        createStep({ id: 'top', functionName: 'web_search_tool', argSummary: 'cats', isTopLevel: true }),
+        createStep({ id: 'nested', functionName: 'web_search_tool', argSummary: 'dogs', isTopLevel: false }),
+      ])
+
+      expect(out.map((s) => s.id).sort()).toEqual(['nested', 'top'])
+    })
+
+    test('drops a nested announcement that duplicates a top-level call by label and input', () => {
+      const out = dedupeNestedToolSteps([
+        createStep({ id: 'top', functionName: 'web_search_tool', argSummary: 'cats', isTopLevel: true }),
+        createStep({ id: 'nested', functionName: 'web_search_tool', argSummary: 'cats', isTopLevel: false }),
+      ])
+
+      expect(out.map((s) => s.id)).toEqual(['top'])
+    })
+
+    test('lifts a nested input summary onto a top-level call that carries none', () => {
+      const out = dedupeNestedToolSteps([
+        createStep({ id: 'top', functionName: 'web_search_tool', argSummary: undefined, isTopLevel: true }),
+        createStep({ id: 'nested', functionName: 'web_search_tool', argSummary: 'cats', isTopLevel: false }),
+      ])
+
+      expect(out).toHaveLength(1)
+      expect(out[0].id).toBe('top')
+      expect(out[0].argSummary).toBe('cats')
     })
   })
 

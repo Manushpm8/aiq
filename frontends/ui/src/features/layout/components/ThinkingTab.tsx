@@ -95,15 +95,27 @@ const SourcesView: FC<SourcesViewProps> = ({ citations }) => {
       </Flex>
 
       {shown.length === 0 ? (
-        <Flex direction="col" align="center" justify="center" className="flex-1 py-8 text-center">
-          <Book className="text-secondary mb-3 h-8 w-8" />
-          <Text kind="body/regular/md" className="text-secondary">
-            Sources the agent reads will appear here.
-          </Text>
-          <Text kind="body/regular/sm" className="text-secondary mt-2">
-            {EMPTY_RESEARCH_DETAILS_HELP_TEXT}
-          </Text>
-        </Flex>
+        filter === 'cited' && sorted.length > 0 ? (
+          <Flex direction="col" align="center" justify="center" className="flex-1 py-8 text-center">
+            <Book className="text-secondary mb-3 h-8 w-8" />
+            <Text kind="body/regular/md" className="text-secondary">
+              No sources were cited in the report.
+            </Text>
+            <Text kind="body/regular/sm" className="text-secondary mt-2">
+              Switch to All to see every source the agent found.
+            </Text>
+          </Flex>
+        ) : (
+          <Flex direction="col" align="center" justify="center" className="flex-1 py-8 text-center">
+            <Book className="text-secondary mb-3 h-8 w-8" />
+            <Text kind="body/regular/md" className="text-secondary">
+              Sources the agent reads will appear here.
+            </Text>
+            <Text kind="body/regular/sm" className="text-secondary mt-2">
+              {EMPTY_RESEARCH_DETAILS_HELP_TEXT}
+            </Text>
+          </Flex>
+        )
       ) : (
         <Flex direction="col" gap="3" className="min-h-0 flex-1 overflow-y-auto">
           {filter === 'all' ? (

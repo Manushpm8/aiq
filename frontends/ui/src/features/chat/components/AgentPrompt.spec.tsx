@@ -220,6 +220,56 @@ describe('AgentPrompt', () => {
     expect(rejectButton).toHaveFocus()
   })
 
+  test('treats type="approval" as an approval prompt even without the approve/reject sentence', () => {
+    useChatStore.setState({ respondToInteractionFn: vi.fn() })
+
+    render(<AgentPrompt id="p" type="approval" content="Shall I proceed with this plan?" />)
+
+    expect(screen.getByRole('button', { name: /approve plan/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /reject plan/i })).toBeInTheDocument()
+  })
+
+  test('pressing Enter approves when focus is not on an interactive control', async () => {
+    const user = userEvent.setup()
+    const respond = vi.fn()
+    useChatStore.setState({ respondToInteractionFn: respond })
+
+    render(
+      <AgentPrompt
+        id="p"
+        type="approval"
+        content="Reply **approve** to proceed, **reject** to cancel"
+      />
+    )
+
+    await user.keyboard('{Enter}')
+
+    expect(respond).toHaveBeenCalledWith('approve')
+  })
+
+  test('pressing Enter while the Reject button is focused rejects instead of approving', async () => {
+    const user = userEvent.setup()
+    const respond = vi.fn()
+    useChatStore.setState({ respondToInteractionFn: respond })
+
+    render(
+      <AgentPrompt
+        id="p"
+        type="approval"
+        content="Reply **approve** to proceed, **reject** to cancel"
+      />
+    )
+
+    await user.tab()
+    await user.tab()
+    expect(screen.getByRole('button', { name: /reject plan/i })).toHaveFocus()
+
+    await user.keyboard('{Enter}')
+
+    expect(respond).toHaveBeenCalledWith('reject')
+    expect(respond).not.toHaveBeenCalledWith('approve')
+  })
+
   test('renders approval plan sections as plan preview, not selectable choices', () => {
     useChatStore.setState({ respondToInteractionFn: vi.fn() })
 

@@ -90,20 +90,18 @@ export const AgentResponse: FC<AgentResponseProps> = ({
   const shouldShowButton = showViewReport || (jobId && (isJobActive || isJobComplete))
   const buttonText = isJobActive ? 'View Progress' : 'View Report'
 
-  const isAnotherJobStreaming =
+  const isAnotherJobStreaming = Boolean(
     isDeepResearchStreaming && deepResearchJobId && deepResearchJobId !== jobId
+  )
+  const blockedByActiveJob = !isJobActive && isAnotherJobStreaming
 
   const handleViewReport = useCallback(async () => {
+    if (blockedByActiveJob) return
+
     if (isJobActive) {
       if (!isDeepResearchStreaming || deepResearchJobId !== jobId) {
         await reconnectToActiveJob()
       }
-      setResearchPanelTab('tasks')
-      openRightPanel('research')
-      return
-    }
-
-    if (isAnotherJobStreaming) {
       setResearchPanelTab('tasks')
       openRightPanel('research')
       return
@@ -134,7 +132,7 @@ export const AgentResponse: FC<AgentResponseProps> = ({
     reportContent,
     deepResearchStreamLoaded,
     isJobActive,
-    isAnotherJobStreaming,
+    blockedByActiveJob,
     isDeepResearchStreaming,
     loadResearchPanelTab,
     reconnectToActiveJob,
@@ -161,9 +159,25 @@ export const AgentResponse: FC<AgentResponseProps> = ({
         kind="tertiary"
         size="tiny"
         onClick={handleViewReport}
-        disabled={isLoading}
-        aria-label={isLoading ? 'Loading...' : error ? `Retry: ${buttonText}` : buttonText}
-        title={error ? `Error: ${error}` : isLoading ? 'Loading...' : buttonText}
+        disabled={isLoading || blockedByActiveJob}
+        aria-label={
+          isLoading
+            ? 'Loading...'
+            : blockedByActiveJob
+              ? `${buttonText} (available once the running research job finishes)`
+              : error
+                ? `Retry: ${buttonText}`
+                : buttonText
+        }
+        title={
+          blockedByActiveJob
+            ? 'Available once the running research job finishes'
+            : error
+              ? `Error: ${error}`
+              : isLoading
+                ? 'Loading...'
+                : buttonText
+        }
       >
         <Flex align="center" gap="1">
           {isLoading ? (

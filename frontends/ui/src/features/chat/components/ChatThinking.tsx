@@ -173,28 +173,35 @@ const stripReasoningLabel = (text: string): string =>
  * completed one, then the latest.
  */
 export const dedupeNestedToolSteps = (steps: ThinkingStep[]): ThinkingStep[] => {
-  // Step 1: drop nested steps whose label already appears at top level, and
-  // enrich each surviving top-level step with the longest nested arg summary so
-  // the kept row carries the most descriptive input.
-  const topLevelLabels = new Set(
-    steps.filter((s) => s.isTopLevel).map((s) => getToolLabel(s.functionName).label)
-  )
+  // Step 1: drop nested steps that duplicate a top-level call by tool label AND
+  // input summary, and lift a nested input summary onto a top-level call that
+  // carries none. A distinct nested call differs by its input summary and is kept.
+  const labelOf = (s: ThinkingStep): string => getToolLabel(s.functionName).label
+  const topLevelKeys = new Set<string>()
+  const topLevelLabelsMissingSummary = new Set<string>()
+  for (const s of steps) {
+    if (!s.isTopLevel) continue
+    topLevelKeys.add(`${labelOf(s)}\u0000${s.argSummary ?? ''}`)
+    if (!s.argSummary) topLevelLabelsMissingSummary.add(labelOf(s))
+  }
   const nestedSummaries = new Map<string, string>()
   for (const step of steps) {
     if (step.isTopLevel || !step.argSummary) continue
-    const label = getToolLabel(step.functionName).label
+    const label = labelOf(step)
     const existing = nestedSummaries.get(label)
     if (!existing || step.argSummary.length > existing.length) {
       nestedSummaries.set(label, step.argSummary)
     }
   }
+  const isNestedDuplicate = (s: ThinkingStep): boolean =>
+    topLevelKeys.has(`${labelOf(s)}\u0000${s.argSummary ?? ''}`) ||
+    topLevelLabelsMissingSummary.has(labelOf(s))
   const enriched = steps
-    .filter((s) => s.isTopLevel || !topLevelLabels.has(getToolLabel(s.functionName).label))
+    .filter((s) => s.isTopLevel || !isNestedDuplicate(s))
     .map((step) => {
-      if (!step.isTopLevel) return step
-      const nestedSummary = nestedSummaries.get(getToolLabel(step.functionName).label)
-      if (!nestedSummary || nestedSummary.length <= (step.argSummary?.length ?? 0)) return step
-      return { ...step, argSummary: nestedSummary }
+      if (!step.isTopLevel || step.argSummary) return step
+      const nestedSummary = nestedSummaries.get(labelOf(step))
+      return nestedSummary ? { ...step, argSummary: nestedSummary } : step
     })
 
   // Step 2: collapse remaining duplicate tool rows within the same tool label +
@@ -602,10 +609,7 @@ export const ChatThinking: FC<ChatThinkingProps> = ({
   )
   const phases = useMemo(() => buildPhases(visibleSteps), [visibleSteps])
   const realSteps = useMemo(
-    () =>
-      visibleSteps.filter(
-        (s) => !isReasoningStep(s.functionName) && !isExplanationStep(s.functionName)
-      ),
+    () => visibleSteps.filter((s) => !isFoldedTextStep(s.functionName)),
     [visibleSteps]
   )
 
@@ -675,7 +679,9 @@ export const ChatThinking: FC<ChatThinkingProps> = ({
     if (index < phases.length - 1) return toMs(phases[index + 1].head.timestamp)
     if (isThinking) return now
     if (stoppedAt !== null) return stoppedAt
-    if (phase.children.length > 0) return toMs(phase.children[phase.children.length - 1].timestamp)
+    const lastChild = phase.children.at(-1)
+    if (lastChild?.completedAt) return toMs(lastChild.completedAt)
+    if (lastChild) return toMs(lastChild.timestamp)
     return start
   }
 

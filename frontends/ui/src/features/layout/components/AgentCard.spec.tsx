@@ -112,6 +112,22 @@ describe('AgentCard', () => {
 
       expect(screen.getByRole('button')).toBeDisabled()
     })
+
+    test('an output-only completed agent stays expandable and shows its result', () => {
+      render(
+        <AgentCard
+          agent={createAgent({
+            status: 'complete',
+            currentTask: undefined,
+            toolCalls: [],
+            output: 'Final synthesized result',
+          })}
+        />
+      )
+
+      expect(screen.getByRole('button')).not.toBeDisabled()
+      expect(screen.getByText('Final synthesized result')).toBeInTheDocument()
+    })
   })
 
   describe('tool call counts', () => {
@@ -223,6 +239,24 @@ describe('AgentCard', () => {
         'aria-controls',
         'agent-content-agent-123'
       )
+    })
+
+    test('omits disclosure ARIA when there is no expandable content', () => {
+      render(
+        <AgentCard
+          agent={createAgent({
+            status: 'complete',
+            currentTask: undefined,
+            output: undefined,
+            toolCalls: [],
+          })}
+        />
+      )
+
+      const button = screen.getByRole('button')
+      expect(button).toBeDisabled()
+      expect(button).not.toHaveAttribute('aria-expanded')
+      expect(button).not.toHaveAttribute('aria-controls')
     })
   })
 

@@ -119,6 +119,31 @@ describe('ThinkingTab', () => {
     expect(screen.queryByText('https://read.example')).not.toBeInTheDocument()
   })
 
+  test('shows a cited-specific empty state when sources exist but none are cited', async () => {
+    const user = userEvent.setup()
+    mockState = {
+      ...defaultState,
+      deepResearchCitations: [
+        {
+          id: 'read-only',
+          url: 'https://read.example',
+          content: 'Source read but not cited',
+          timestamp: new Date('2026-05-01T00:00:00Z'),
+          isCited: false,
+        },
+      ],
+    }
+
+    render(<ThinkingTab />)
+    await user.click(screen.getByRole('radio', { name: /Sources/i }))
+    await user.click(screen.getByRole('radio', { name: /Cited \(0\)/i }))
+
+    expect(screen.getByText('No sources were cited in the report.')).toBeInTheDocument()
+    expect(
+      screen.queryByText('Sources the agent reads will appear here.')
+    ).not.toBeInTheDocument()
+  })
+
   test('shows clear empty-state copy for Sources', async () => {
     const user = userEvent.setup()
     render(<ThinkingTab />)

@@ -19,19 +19,20 @@ vi.mock('@/features/layout/store', () => ({
   }),
 }))
 
+const chatState = vi.hoisted(() => ({
+  reportContent: '',
+  deepResearchJobId: null as string | null,
+  isDeepResearchStreaming: false,
+  deepResearchStreamLoaded: false,
+  currentConversation: null,
+  patchConversationMessage: vi.fn(),
+  reconnectToActiveJob: vi.fn(),
+}))
+
 vi.mock('../store', () => ({
-  useChatStore: vi.fn((selector?: (s: any) => any) => {
-    const state = {
-      reportContent: '',
-      deepResearchJobId: null,
-      isDeepResearchStreaming: false,
-      deepResearchStreamLoaded: false,
-      currentConversation: null,
-      patchConversationMessage: vi.fn(),
-      reconnectToActiveJob: vi.fn(),
-    }
-    return selector ? selector(state) : state
-  }),
+  useChatStore: vi.fn((selector?: (s: any) => any) =>
+    selector ? selector(chatState) : chatState
+  ),
 }))
 
 vi.mock('@/adapters/api', () => ({
@@ -77,6 +78,10 @@ describe('AgentResponse', () => {
     mockLoadResearchPanelTab.mockClear()
     hookState.error = null
     hookState.isLoading = false
+    chatState.reportContent = ''
+    chatState.deepResearchJobId = null
+    chatState.isDeepResearchStreaming = false
+    chatState.deepResearchStreamLoaded = false
   })
 
   test('renders response content', () => {
@@ -170,6 +175,24 @@ describe('AgentResponse', () => {
     expect(alert).toHaveTextContent('network timeout')
     await user.click(screen.getByRole('button', { name: /retry/i }))
     expect(mockLoadResearchPanelTab).toHaveBeenCalledWith('job-1', 'report')
+  })
+
+  test('disables a completed job View Report while another job is streaming, instead of routing to it', async () => {
+    const user = userEvent.setup()
+    chatState.isDeepResearchStreaming = true
+    chatState.deepResearchJobId = 'other-job'
+
+    render(<AgentResponse content="Old answer" jobId="job-A" deepResearchJobStatus="success" />)
+
+    const button = screen.getByRole('button', {
+      name: /available once the running research job finishes/i,
+    })
+    expect(button).toBeDisabled()
+
+    await user.click(button)
+
+    expect(mockSetResearchPanelTab).not.toHaveBeenCalledWith('tasks')
+    expect(mockOpenRightPanel).not.toHaveBeenCalled()
   })
 
   test('strips a baked references block from the rendered body and lists sources', () => {

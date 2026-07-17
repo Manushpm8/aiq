@@ -141,7 +141,7 @@ export interface AgentPromptProps {
  * response has been given.
  */
 export const AgentPrompt: FC<AgentPromptProps> = ({
-  type: _type,
+  type,
   content,
   options = [],
   isResponded = false,
@@ -149,7 +149,8 @@ export const AgentPrompt: FC<AgentPromptProps> = ({
   variant = 'default',
 }) => {
   const respondToInteractionFn = useChatStore((state) => state.respondToInteractionFn)
-  const isApprovalPrompt = APPROVAL_PROMPT_RE.test(content)
+  const isApprovalPrompt =
+    type === 'approval' || type === 'plan_approval' || APPROVAL_PROMPT_RE.test(content)
   const canRespond = !isResponded && !!respondToInteractionFn
   const showApprovalButtons = isApprovalPrompt && canRespond
 
@@ -210,6 +211,13 @@ export const AgentPrompt: FC<AgentPromptProps> = ({
       if (e.metaKey || e.ctrlKey || e.altKey || isTyping()) return
       if (showApprovalButtons) {
         if (e.key === 'Enter') {
+          const target = e.target
+          if (
+            target instanceof HTMLElement &&
+            target.closest('button, a, [role="button"], [role="link"]')
+          ) {
+            return
+          }
           e.preventDefault()
           handleApprove()
         } else if (e.key === 'Escape') {

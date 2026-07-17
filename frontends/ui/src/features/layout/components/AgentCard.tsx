@@ -90,7 +90,8 @@ export const AgentCard: FC<AgentCardProps> = ({ agent, defaultExpanded = true })
   const toolCalls = dedupeToolCalls(agent.toolCalls || [])
   const completedToolCalls = toolCalls.filter((tc) => tc.status === 'complete').length
   const hasToolCalls = toolCalls.length > 0
-  const hasExpandableContent = hasToolCalls || Boolean(agent.currentTask)
+  const output = agent.output?.trim()
+  const hasExpandableContent = hasToolCalls || Boolean(agent.currentTask) || Boolean(output)
   const canExpand = hasExpandableContent
 
   return (
@@ -102,8 +103,8 @@ export const AgentCard: FC<AgentCardProps> = ({ agent, defaultExpanded = true })
       <button
         type="button"
         onClick={() => canExpand && setIsExpanded((v) => !v)}
-        aria-expanded={isExpanded}
-        aria-controls={`agent-content-${agent.id}`}
+        aria-expanded={canExpand ? isExpanded : undefined}
+        aria-controls={canExpand ? `agent-content-${agent.id}` : undefined}
         className="flex w-full items-center gap-2 px-3 py-2 text-left disabled:cursor-default"
         disabled={!canExpand}
       >
@@ -153,6 +154,17 @@ export const AgentCard: FC<AgentCardProps> = ({ agent, defaultExpanded = true })
                 className="text-secondary whitespace-pre-wrap break-words"
               >
                 {agent.currentTask}
+              </Text>
+            </div>
+          )}
+
+          {output && (
+            <div className="max-h-40 overflow-y-auto pr-1">
+              <Text
+                kind="body/regular/sm"
+                className="text-secondary whitespace-pre-wrap break-words"
+              >
+                {output}
               </Text>
             </div>
           )}

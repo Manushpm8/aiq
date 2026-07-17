@@ -23,6 +23,7 @@ import { Wand } from '@/adapters/ui/icons'
 import { useChatStore } from '@/features/chat'
 import { ChatThinking } from '@/features/chat/components/ChatThinking'
 import { deepResearchToThinkingSteps } from '@/features/chat/lib/deep-research-trace'
+import { isPinnedToBottom } from '@/shared/lib/scroll'
 import { EMPTY_RESEARCH_DETAILS_HELP_TEXT } from './research-empty-state-copy'
 
 /**
@@ -54,8 +55,9 @@ export const AgentsTab: FC = () => {
   useEffect(() => {
     const el = scrollRef.current
     if (!el || runningCount === 0) return
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
-    if (nearBottom) el.scrollTop = el.scrollHeight
+    if (isPinnedToBottom(el.scrollTop, el.scrollHeight, el.clientHeight)) {
+      el.scrollTop = el.scrollHeight
+    }
   }, [steps, runningCount])
 
   return (

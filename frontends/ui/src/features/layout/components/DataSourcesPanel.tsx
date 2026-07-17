@@ -10,7 +10,7 @@
 
 'use client'
 
-import { type FC, memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { type FC, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Flex, Text, SegmentedControl, Switch, Button, Banner } from '@/adapters/ui'
 import { createMcpAuthClient, openAuthPopupAndWait } from '@/adapters/api'
 import { useShallow } from 'zustand/react/shallow'
@@ -58,6 +58,9 @@ export const DataSourcesPanel: FC<DataSourcesPanelProps> = memo(function DataSou
     dataSourcesError: s.dataSourcesError,
   })))
 
+  const panelRef = useRef<HTMLDivElement>(null)
+  const openerRef = useRef<HTMLElement | null>(null)
+
   const closeRightPanel = useLayoutStore((s) => s.closeRightPanel)
   const setDataSourcesPanelTab = useLayoutStore((s) => s.setDataSourcesPanelTab)
   const toggleDataSource = useLayoutStore((s) => s.toggleDataSource)
@@ -74,6 +77,19 @@ export const DataSourcesPanel: FC<DataSourcesPanelProps> = memo(function DataSou
       void refreshDataSourceStatus(idToken)
     }
   }, [isOpen, idToken, refreshDataSourceStatus])
+
+  useEffect(() => {
+    const el = panelRef.current
+    if (isOpen) {
+      openerRef.current = document.activeElement as HTMLElement | null
+      el?.removeAttribute('inert')
+      return
+    }
+    el?.setAttribute('inert', '')
+    const opener = openerRef.current
+    openerRef.current = null
+    opener?.focus?.()
+  }, [isOpen])
 
   // Check if current session is busy with operations
   const isBusy = useIsCurrentSessionBusy()
@@ -218,6 +234,7 @@ export const DataSourcesPanel: FC<DataSourcesPanelProps> = memo(function DataSou
 
   return (
     <div
+      ref={panelRef}
       className={cn(
         'border-base bg-surface-base h-full shrink-0 overflow-hidden',
         isOpen && 'border-l'
@@ -316,30 +333,14 @@ export const DataSourcesPanel: FC<DataSourcesPanelProps> = memo(function DataSou
               <Flex
                 align="center"
                 justify="between"
-                role="button"
-                tabIndex={isBusy ? -1 : 0}
-                onClick={isBusy ? undefined : handleToggleAll}
-                onKeyDown={(e) => {
-                  if (!isBusy && (e.key === 'Enter' || e.key === ' ')) {
-                    e.preventDefault()
-                    handleToggleAll()
-                  }
-                }}
                 className={cn(
                   'surface-card mb-4 border p-3',
                   isBusy
-                    ? 'border-base cursor-not-allowed opacity-50'
+                    ? 'border-base opacity-50'
                     : anyAvailableEnabled
-                      ? 'brand-tint cursor-pointer border'
-                      : 'border-base hover:bg-surface-raised-50 cursor-pointer'
+                      ? 'brand-tint border'
+                      : 'border-base'
                 )}
-                aria-pressed={anyAvailableEnabled}
-                aria-disabled={isBusy}
-                aria-label={
-                  isBusy
-                    ? 'All available connections (disabled during operations)'
-                    : `All available connections: ${anyAvailableEnabled ? 'enabled' : 'disabled'}`
-                }
                 title={
                   isBusy ? 'Data source changes disabled during active operations' : undefined
                 }
@@ -347,22 +348,19 @@ export const DataSourcesPanel: FC<DataSourcesPanelProps> = memo(function DataSou
                 <Text kind="label/semibold/sm" className="text-primary">
                   Disable / Enable All
                 </Text>
-                {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
-                <div onClick={(e) => e.stopPropagation()}>
-                  <Switch
-                    size="small"
-                    checked={anyAvailableEnabled}
-                    onCheckedChange={handleToggleAll}
-                    disabled={isBusy}
-                    aria-label={
-                      isBusy
-                        ? 'Toggle all connections (disabled)'
-                        : anyAvailableEnabled
-                          ? 'Disable all connections'
-                          : 'Enable all connections'
-                    }
-                  />
-                </div>
+                <Switch
+                  size="small"
+                  checked={anyAvailableEnabled}
+                  onCheckedChange={handleToggleAll}
+                  disabled={isBusy}
+                  aria-label={
+                    isBusy
+                      ? 'Toggle all connections (disabled)'
+                      : anyAvailableEnabled
+                        ? 'Disable all connections'
+                        : 'Enable all connections'
+                  }
+                />
               </Flex>
 
               {/* Individual Connections */}
@@ -388,7 +386,7 @@ export const DataSourcesPanel: FC<DataSourcesPanelProps> = memo(function DataSou
                   <Button
                     kind="secondary"
                     size="small"
-                    onClick={() => fetchDataSources()}
+                    onClick={() => fetchDataSources(idToken)}
                     aria-label="Retry loading data sources"
                   >
                     Retry

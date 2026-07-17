@@ -53,6 +53,17 @@ export const DataConnectionsTab: FC<DataConnectionsTabProps> = ({ enabledSourceI
         category: source.category ?? 'enterprise',
         defaultEnabled: true,
         requiresAuth: source.requires_auth ?? false,
+        perUserAuth: source.per_user_auth
+          ? {
+              required: source.per_user_auth.required,
+              provider: source.per_user_auth.provider,
+              mcpServerId: source.per_user_auth.mcp_server_id,
+              status: source.per_user_auth.status,
+              connectUrl: source.per_user_auth.connect_url,
+              expiresAt: source.per_user_auth.expires_at,
+              lastError: source.per_user_auth.last_error,
+            }
+          : undefined,
       }
     })
   }, [availableDataSources])

@@ -22,7 +22,8 @@ const ACTIVE_JOB_STATUSES: readonly DeepResearchJobStatus[] = ['submitted', 'run
 /** Epoch ms of the most recent user-typed message, or null when the session has none. */
 export const lastUserMessageTime = (messages: ChatMessage[]): number | null => {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].messageType === 'user') {
+    const messageType = messages[i].messageType || (messages[i].role === 'user' ? 'user' : 'assistant')
+    if (messageType === 'user') {
       return new Date(messages[i].timestamp).getTime()
     }
   }
