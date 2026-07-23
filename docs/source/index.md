@@ -51,6 +51,7 @@ Overview <./customization/index.md>
 Configuration Reference <./customization/configuration-reference.md>
 Swapping Models <./customization/swapping-models.md>
 Tools and Sources <./customization/tools-and-sources.md>
+You.com API Suite <./customization/you-com.md>
 MCP Tools <./customization/mcp-tools.md>
 Guardrails <./customization/guardrails.md>
 Knowledge Layer <./customization/knowledge-layer.md>
@@ -74,6 +75,7 @@ Adding a Data Source <./extending/adding-a-data-source.md>
 Overview <./integration/index.md>
 Agent Skills <./integration/agent-skills.md>
 REST API <./integration/rest-api.md>
+MCP Server <./integration/mcp-server.md>
 ```
 
 ```{toctree}
@@ -102,6 +104,7 @@ Authentication <./deployment/authentication.md>
 Async Job Content Encryption <./deployment/content-encryption.md>
 Observability <./deployment/observability.md>
 Production <./deployment/production.md>
+OpenShell <./deployment/openshell.md>
 Kubernetes <./deployment/kubernetes.md>
 Amazon OpenSearch Serverless <./deployment/aws-opensearch-serverless.md>
 ```
@@ -142,6 +145,7 @@ FAQ <./resources/faq.md>
 ./examples/minimal-shallow-only.md
 ./examples/full-pipeline-llamaindex.md
 ./examples/full-pipeline-web.md
+./examples/azure-ai-search.md
 ./examples/cli-with-local-nims.md
 ./examples/hybrid-frontier-model.md
 ./examples/skills-sandbox/index.md

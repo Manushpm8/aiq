@@ -16,13 +16,20 @@
 """Custom middleware for the deep research agent."""
 
 import asyncio
+import hashlib
 import json
 import logging
+import posixpath
+import re
+import threading
 from pathlib import Path
+from pathlib import PurePosixPath
 
 from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import hook_config
 from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import AIMessage
+from langchain_core.messages import HumanMessage
 from langchain_core.messages import SystemMessage
 from langchain_core.messages import ToolMessage
 
@@ -43,6 +50,90 @@ _SOURCE_ROUTING_PATH = "/shared/source_routing.json"
 # route-local key. The guard reads raw state, so it must accept both forms or it
 # blocks the orchestrator forever on sandboxed runs.
 _SOURCE_ROUTING_STATE_KEYS = (_SOURCE_ROUTING_PATH, "/source_routing.json")
+FINAL_REPORT_PATH = "/shared/output.md"
+FINAL_REPORT_STATE_PATHS = (FINAL_REPORT_PATH, "/output.md")
+_UNRESOLVED_SANDBOX_PATH_PATTERN = re.compile(
+    r"<\s*sandbox_(?:artifact_dir|workdir)\s*>|\{\{\s*sandbox_(?:artifact_dir|workdir)\s*\}\}"
+)
+
+
+def _normalized_virtual_path(path: object) -> str | None:
+    """Return a canonical virtual path without weakening backend validation."""
+    if not isinstance(path, str) or not path:
+        return None
+    normalized = posixpath.normpath(path.replace("\\", "/"))
+    return normalized if normalized.startswith("/") else f"/{normalized}"
+
+
+def _tool_file_path(tool_call: object) -> str | None:
+    """Read and normalize a filesystem tool's target path."""
+    if not isinstance(tool_call, dict):
+        return None
+    args = tool_call.get("args")
+    if not isinstance(args, dict):
+        return None
+    return _normalized_virtual_path(args.get("file_path", args.get("path")))
+
+
+def _entry_text(entry: object) -> str | None:
+    """Read exact text from a DeepAgents state-file entry."""
+    if isinstance(entry, dict):
+        entry = entry.get("content")
+    if isinstance(entry, bytes):
+        try:
+            return entry.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if isinstance(entry, str):
+        return entry
+    return None
+
+
+def _tool_result_failed(result: object) -> bool:
+    """Return whether a filesystem tool result reports an error."""
+    status = result.get("status") if isinstance(result, dict) else getattr(result, "status", None)
+    return status == "error"
+
+
+class FinalReportCommitTracker:
+    """Run-local proof of the writer's most recent successful report mutation."""
+
+    def __init__(self) -> None:
+        self._digest: str | None = None
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _digest_text(content: str) -> str:
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    def record(self, content: str) -> str:
+        """Record the exact UTF-8 digest after a successful writer mutation."""
+        digest = self._digest_text(content)
+        with self._lock:
+            self._digest = digest
+        return digest
+
+    @property
+    def digest(self) -> str | None:
+        """Return the most recently committed digest for this run."""
+        with self._lock:
+            return self._digest
+
+    def committed_text(
+        self,
+        files: object,
+        *,
+        paths: tuple[str, ...] = FINAL_REPORT_STATE_PATHS,
+    ) -> str | None:
+        """Return the non-empty state file matching the writer's exact digest."""
+        digest = self.digest
+        if digest is None or not isinstance(files, dict):
+            return None
+        for path in paths:
+            content = _entry_text(files.get(path))
+            if content is not None and content.strip() and self._digest_text(content) == digest:
+                return content
+        return None
 
 
 class SourceRoutingGuardMiddleware(AgentMiddleware):
@@ -155,6 +246,237 @@ class ExecuteTimeoutClampMiddleware(AgentMiddleware):
         )
         modified = {**tool_call, "args": {**args, "timeout": self.max_timeout_seconds}}
         return await handler(request.override(tool_call=modified))
+
+
+class FilesystemToolCallGuardMiddleware(AgentMiddleware):
+    """Normalize safe filesystem aliases and reject unresolved sandbox path templates."""
+
+    async def awrap_tool_call(self, request, handler):
+        """Repair ``read_file(path=...)`` and fail before executing placeholder paths."""
+        tool_call = request.tool_call
+        if not isinstance(tool_call, dict):
+            return await handler(request)
+        args = tool_call.get("args")
+        if not isinstance(args, dict):
+            return await handler(request)
+
+        if tool_call.get("name") == "read_file" and isinstance(args.get("path"), str):
+            normalized_args = {key: value for key, value in args.items() if key != "path"}
+            normalized_args.setdefault("file_path", args["path"])
+            modified = {**tool_call, "args": normalized_args}
+            return await handler(request.override(tool_call=modified))
+
+        if tool_call.get("name") == "execute" and isinstance(args.get("command"), str):
+            command = args["command"]
+            unresolved = _UNRESOLVED_SANDBOX_PATH_PATTERN.search(command)
+            if unresolved is not None:
+                return ToolMessage(
+                    content=(
+                        f"Command not executed: unresolved sandbox path placeholder {unresolved.group(0)}. "
+                        "Use the exact sandbox_workdir or sandbox_artifact_dir path from your instructions."
+                    ),
+                    tool_call_id=tool_call.get("id", "filesystem-tool-call-guard"),
+                    name="execute",
+                    status="error",
+                )
+
+        return await handler(request)
+
+
+class FinalReportOwnershipGuardMiddleware(AgentMiddleware):
+    """Reserve final-report mutation for the writer role."""
+
+    async def awrap_tool_call(self, request, handler):
+        """Reject non-writer mutations of either final-report state path."""
+        tool_call = request.tool_call if isinstance(getattr(request, "tool_call", None), dict) else {}
+        if tool_call.get("name") not in {"write_file", "edit_file"}:
+            return await handler(request)
+        if _tool_file_path(tool_call) not in FINAL_REPORT_STATE_PATHS:
+            return await handler(request)
+        return ToolMessage(
+            content=(
+                "final_report_writer_only: only writer-agent may write or edit "
+                f"{FINAL_REPORT_PATH}; hand off evidence through the normal research workflow."
+            ),
+            tool_call_id=tool_call.get("id", "final-report-ownership"),
+            name=tool_call.get("name"),
+            status="error",
+        )
+
+
+class FinalReportCommitMiddleware(AgentMiddleware):
+    """Commit writer-owned output with overwrite and exact-digest verification."""
+
+    def __init__(self, *, backend: object, tracker: FinalReportCommitTracker) -> None:
+        self.backend = backend
+        self.tracker = tracker
+        self._mutation_lock = asyncio.Lock()
+
+    @staticmethod
+    def _tool_error(tool_call: dict[str, object], reason: str, guidance: str) -> ToolMessage:
+        return ToolMessage(
+            content=f"{reason}: {guidance}",
+            tool_call_id=tool_call.get("id", "final-report-commit"),
+            name=tool_call.get("name"),
+            status="error",
+        )
+
+    @staticmethod
+    def _response_error(response: object) -> object:
+        return response.get("error") if isinstance(response, dict) else getattr(response, "error", None)
+
+    async def _commit_write(self, tool_call: dict[str, object]) -> ToolMessage:
+        args = tool_call.get("args")
+        content = args.get("content") if isinstance(args, dict) else None
+        if not isinstance(content, str):
+            return self._tool_error(tool_call, "writer_output_commit_failed", "report content must be text")
+        try:
+            responses = await self.backend.aupload_files([(FINAL_REPORT_PATH, content.encode("utf-8"))])
+        except Exception as exc:  # noqa: BLE001 - return a stable, sanitized tool error
+            logger.warning("Writer final-report commit failed (%s)", type(exc).__name__)
+            return self._tool_error(tool_call, "writer_output_commit_failed", "the backend rejected the write")
+        if not isinstance(responses, list) or len(responses) != 1 or self._response_error(responses[0]):
+            logger.warning("Writer final-report commit returned an unsuccessful upload response")
+            return self._tool_error(tool_call, "writer_output_commit_failed", "the backend rejected the write")
+        self.tracker.record(content)
+        return ToolMessage(
+            content=f"Updated file {FINAL_REPORT_PATH}",
+            tool_call_id=tool_call.get("id", "final-report-commit"),
+            name="write_file",
+            status="success",
+        )
+
+    async def _refresh_after_edit(self, tool_call: dict[str, object], result: object) -> object:
+        if _tool_result_failed(result):
+            return result
+        try:
+            responses = await self.backend.adownload_files([FINAL_REPORT_PATH])
+        except Exception as exc:  # noqa: BLE001 - return a stable, sanitized tool error
+            logger.warning("Writer final-report verification failed (%s)", type(exc).__name__)
+            return self._tool_error(
+                tool_call,
+                "writer_output_commit_failed",
+                "the edited report could not be verified",
+            )
+        response = responses[0] if isinstance(responses, list) and len(responses) == 1 else None
+        content = response.get("content") if isinstance(response, dict) else getattr(response, "content", None)
+        if response is None or self._response_error(response) or not isinstance(content, bytes):
+            logger.warning("Writer final-report verification returned an unsuccessful download response")
+            return self._tool_error(
+                tool_call,
+                "writer_output_commit_failed",
+                "the edited report could not be verified",
+            )
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            return self._tool_error(tool_call, "writer_output_commit_failed", "the edited report is not UTF-8")
+        self.tracker.record(text)
+        return result
+
+    async def awrap_tool_call(self, request, handler):
+        """Upsert writer output and track successful writes or edits only."""
+        tool_call = request.tool_call if isinstance(getattr(request, "tool_call", None), dict) else {}
+        tool_name = tool_call.get("name")
+        if tool_name not in {"write_file", "edit_file"}:
+            return await handler(request)
+        target = _tool_file_path(tool_call)
+        if target not in FINAL_REPORT_STATE_PATHS:
+            return await handler(request)
+        if target != FINAL_REPORT_PATH:
+            return self._tool_error(
+                tool_call,
+                "writer_output_path_invalid",
+                f"write the final report to {FINAL_REPORT_PATH}",
+            )
+
+        async with self._mutation_lock:
+            if tool_name == "write_file":
+                return await self._commit_write(tool_call)
+            try:
+                result = await handler(request)
+            except Exception as exc:  # noqa: BLE001 - return a stable, sanitized tool error
+                logger.warning("Writer final-report edit failed (%s)", type(exc).__name__)
+                return self._tool_error(tool_call, "writer_output_commit_failed", "the backend rejected the edit")
+            return await self._refresh_after_edit(tool_call, result)
+
+
+class RequiredOutputFileMiddleware(AgentMiddleware):
+    """Verify a model's file-backed completion marker before ending its run.
+
+    A model can claim that it wrote a file without making the filesystem tool call.
+    Keep recovery local to that agent: request one corrective model turn, then fail
+    with a stable reason code instead of restarting the surrounding workflow.
+    """
+
+    def __init__(
+        self,
+        *,
+        tracker: FinalReportCommitTracker,
+        paths: tuple[str, ...] = FINAL_REPORT_STATE_PATHS,
+        completion_marker: str = "Wrote /shared/output.md",
+        max_retries: int = 1,
+        reason_code: str = "writer_output_not_committed",
+    ) -> None:
+        """Configure the accepted state paths and bounded corrective turns."""
+        if not paths:
+            raise ValueError("paths must not be empty")
+        if max_retries < 0:
+            raise ValueError("max_retries must be non-negative")
+        self.tracker = tracker
+        self.paths = paths
+        self.completion_marker = completion_marker
+        self.max_retries = max_retries
+        self.reason_code = reason_code
+        self._retry_message = (
+            "The final report is missing, empty, or was not committed by this writer run. "
+            "Do not repeat research or regenerate artifacts. "
+            f"Call write_file with file_path={paths[0]} and the complete final Markdown, confirm the tool "
+            f"succeeds, and only then return `{completion_marker}`."
+        )
+
+    @staticmethod
+    def _files_from_state(state: object) -> object:
+        return state.get("files", {}) if isinstance(state, dict) else getattr(state, "files", {})
+
+    def _required_output_is_committed(self, state: object) -> bool:
+        files = self._files_from_state(state)
+        return self.tracker.committed_text(files, paths=self.paths) is not None
+
+    def _retry_count(self, messages: list[object]) -> int:
+        return sum(isinstance(message, HumanMessage) and message.content == self._retry_message for message in messages)
+
+    def _check_after_model(self, state: object) -> dict[str, object] | None:
+        messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
+        if not isinstance(messages, list) or not messages:
+            return None
+        last_message = messages[-1]
+        if not isinstance(last_message, AIMessage) or last_message.tool_calls:
+            return None
+        if last_message.text.strip() != self.completion_marker:
+            return None
+        if self._required_output_is_committed(state):
+            return None
+
+        retry_count = self._retry_count(messages)
+        if retry_count >= self.max_retries:
+            raise RuntimeError(self.reason_code)
+
+        logger.warning("Agent reported completion before committing the required output; requesting corrective turn")
+        return {
+            "messages": [HumanMessage(content=self._retry_message)],
+            "jump_to": "model",
+        }
+
+    @hook_config(can_jump_to=["model"])
+    def after_model(self, state, runtime):
+        """Verify synchronous writer completion and request one local repair when needed."""
+        return self._check_after_model(state)
+
+    @hook_config(can_jump_to=["model"])
+    async def aafter_model(self, state, runtime):
+        """Verify asynchronous writer completion and request one local repair when needed."""
+        return self._check_after_model(state)
 
 
 # Common hallucinated tool name mappings
@@ -563,10 +885,34 @@ class ArtifactHarvestMiddleware(AgentMiddleware):
         result_status = result.get("status") if isinstance(result, dict) else getattr(result, "status", None)
         if tool_name == "execute" and result_status != "error":
             try:
-                await asyncio.to_thread(self.artifact_manager.harvest_after_execute)
+                captured = await asyncio.to_thread(self.artifact_manager.harvest_after_execute)
             except Exception as exc:  # noqa: BLE001 - artifact capture must not fail the agent
                 logger.warning("Artifact checkpoint harvest failed (%s)", type(exc).__name__)
+            else:
+                result = self._append_checkpoint_result(result, captured)
         return result
+
+    @staticmethod
+    def _append_checkpoint_result(result: object, captured: object) -> object:
+        """Tell the model the exact safe filenames captured from a valid manifest."""
+        if not isinstance(result, ToolMessage) or not isinstance(result.content, str):
+            return result
+        if not isinstance(captured, (list, tuple)) or not captured:
+            return result
+
+        lines = ["Artifact checkpoint captured these exact filenames:"]
+        for artifact in captured[:10]:
+            filename = PurePosixPath(str(getattr(artifact, "filename", ""))).name
+            if not filename:
+                continue
+            if bool(getattr(artifact, "inline", False)):
+                lines.append(f"- {filename} (inline): embed as ![caption](artifact://{filename})")
+            else:
+                lines.append(f"- {filename} (downloadable; not marked inline)")
+        if len(lines) == 1:
+            return result
+        content = result.content.rstrip() + "\n\n" + "\n".join(lines)
+        return result.model_copy(update={"content": content})
 
 
 class PlanPersistenceMiddleware(AgentMiddleware):

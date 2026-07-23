@@ -21,13 +21,24 @@ from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 
 import pytest
+from deepagents.backends import CompositeBackend
+from deepagents.backends import StateBackend
+from deepagents.middleware.filesystem import FilesystemMiddleware
+from langchain.agents import create_agent
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
+from langchain_core.messages import HumanMessage
 from langchain_core.messages import SystemMessage
 from langchain_core.messages import ToolMessage
 
 from aiq_agent.agents.deep_researcher.custom_middleware import ArtifactHarvestMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import ExecuteTimeoutClampMiddleware
+from aiq_agent.agents.deep_researcher.custom_middleware import FilesystemToolCallGuardMiddleware
+from aiq_agent.agents.deep_researcher.custom_middleware import FinalReportCommitMiddleware
+from aiq_agent.agents.deep_researcher.custom_middleware import FinalReportCommitTracker
+from aiq_agent.agents.deep_researcher.custom_middleware import FinalReportOwnershipGuardMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import PlanPersistenceMiddleware
+from aiq_agent.agents.deep_researcher.custom_middleware import RequiredOutputFileMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import SourceRegistryMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import SourceRoutingGuardMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import TodoSuppressionMiddleware
@@ -37,6 +48,13 @@ from aiq_agent.agents.deep_researcher.tools.source_registry import build_get_ver
 from aiq_agent.common.citation_verification import SourceEntry
 from aiq_agent.common.data_source_registry import populate_from_config
 from aiq_agent.common.data_source_registry import reset_registry
+
+
+class _ToolBindingFakeChatModel(FakeMessagesListChatModel):
+    """Scripted chat model that accepts the tools bound by ``create_agent``."""
+
+    def bind_tools(self, tools, *, tool_choice=None, **kwargs):
+        return self
 
 
 class TestSourceRoutingGuardMiddleware:
@@ -195,6 +213,430 @@ class TestExecuteTimeoutClampMiddleware:
 
         request.override.assert_not_called()
         handler.assert_awaited_once_with(request)
+
+
+class TestFilesystemToolCallGuardMiddleware:
+    """Filesystem calls are normalized and unresolved path templates fail before execution."""
+
+    @staticmethod
+    def _request(tool_name: str, args: dict) -> MagicMock:
+        request = MagicMock()
+        request.tool_call = {"name": tool_name, "args": args, "id": "tc1"}
+
+        def _override(*, tool_call):
+            overridden = MagicMock()
+            overridden.tool_call = tool_call
+            return overridden
+
+        request.override.side_effect = _override
+        return request
+
+    @pytest.mark.asyncio
+    async def test_normalizes_read_file_path_alias(self) -> None:
+        middleware = FilesystemToolCallGuardMiddleware()
+        request = self._request("read_file", {"path": "/shared/output.md", "offset": 1})
+        handler = AsyncMock(return_value=ToolMessage(content="ok", tool_call_id="tc1"))
+
+        await middleware.awrap_tool_call(request, handler)
+
+        forwarded = handler.await_args.args[0]
+        assert forwarded.tool_call["args"] == {"file_path": "/shared/output.md", "offset": 1}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "placeholder",
+        [
+            "<sandbox_artifact_dir>",
+            "<  sandbox_workdir  >",
+            "{{ sandbox_workdir }}",
+            "{{sandbox_artifact_dir}}",
+            "{{  sandbox_workdir  }}",
+        ],
+    )
+    async def test_rejects_unresolved_execute_path_placeholder(self, placeholder: str) -> None:
+        middleware = FilesystemToolCallGuardMiddleware()
+        request = self._request("execute", {"command": f"python3 make_chart.py {placeholder}"})
+        handler = AsyncMock(return_value=ToolMessage(content="ok", tool_call_id="tc1"))
+
+        result = await middleware.awrap_tool_call(request, handler)
+
+        handler.assert_not_awaited()
+        assert isinstance(result, ToolMessage)
+        assert result.status == "error"
+        assert placeholder in result.content
+
+    @pytest.mark.asyncio
+    async def test_allows_concrete_execute_paths(self) -> None:
+        middleware = FilesystemToolCallGuardMiddleware()
+        request = self._request(
+            "execute",
+            {"command": "python3 /sandbox/job/make_chart.py /sandbox/job/aiq-artifacts"},
+        )
+        expected = ToolMessage(content="ok", tool_call_id="tc1")
+        handler = AsyncMock(return_value=expected)
+
+        result = await middleware.awrap_tool_call(request, handler)
+
+        assert result is expected
+        handler.assert_awaited_once_with(request)
+
+
+class TestFinalReportOwnershipGuardMiddleware:
+    """Only the writer may mutate an accepted final-report path."""
+
+    @staticmethod
+    def _request(tool_name: str, path: str) -> MagicMock:
+        request = MagicMock()
+        request.tool_call = {"name": tool_name, "args": {"file_path": path}, "id": "tc1"}
+        return request
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool_name", ["write_file", "edit_file"])
+    @pytest.mark.parametrize("path", ["/shared/output.md", "/output.md", "/shared/./output.md"])
+    async def test_rejects_final_report_mutation(self, tool_name: str, path: str) -> None:
+        middleware = FinalReportOwnershipGuardMiddleware()
+        handler = AsyncMock()
+
+        result = await middleware.awrap_tool_call(self._request(tool_name, path), handler)
+
+        handler.assert_not_awaited()
+        assert result.status == "error"
+        assert str(result.content).startswith("final_report_writer_only:")
+
+    @pytest.mark.asyncio
+    async def test_allows_unrelated_file_mutation(self) -> None:
+        middleware = FinalReportOwnershipGuardMiddleware()
+        request = self._request("write_file", "/shared/plan.md")
+        expected = ToolMessage(content="ok", tool_call_id="tc1")
+        handler = AsyncMock(return_value=expected)
+
+        result = await middleware.awrap_tool_call(request, handler)
+
+        assert result is expected
+        handler.assert_awaited_once_with(request)
+
+
+class TestFinalReportCommitMiddleware:
+    """Writer mutations are overwrite-capable and recorded only after success."""
+
+    @staticmethod
+    def _request(tool_name: str, *, path: str = "/shared/output.md", **args: object) -> MagicMock:
+        request = MagicMock()
+        request.tool_call = {
+            "name": tool_name,
+            "args": {"file_path": path, **args},
+            "id": "tc1",
+        }
+        return request
+
+    @pytest.mark.asyncio
+    async def test_successful_write_records_exact_digest(self) -> None:
+        tracker = FinalReportCommitTracker()
+        backend = MagicMock()
+        backend.aupload_files = AsyncMock(return_value=[SimpleNamespace(error=None)])
+        middleware = FinalReportCommitMiddleware(backend=backend, tracker=tracker)
+        handler = AsyncMock()
+        report = "# Final\r\n\r\nExact bytes.\r\n"
+
+        result = await middleware.awrap_tool_call(
+            self._request("write_file", content=report),
+            handler,
+        )
+
+        handler.assert_not_awaited()
+        backend.aupload_files.assert_awaited_once_with([("/shared/output.md", report.encode("utf-8"))])
+        assert result.status == "success"
+        assert tracker.committed_text({"/shared/output.md": {"content": report}}) == report
+        assert tracker.committed_text({"/shared/output.md": {"content": report.replace("\r\n", "\n")}}) is None
+
+    @pytest.mark.asyncio
+    async def test_failed_write_is_not_recorded(self) -> None:
+        tracker = FinalReportCommitTracker()
+        backend = MagicMock()
+        backend.aupload_files = AsyncMock(return_value=[SimpleNamespace(error="internal detail")])
+        middleware = FinalReportCommitMiddleware(backend=backend, tracker=tracker)
+
+        result = await middleware.awrap_tool_call(
+            self._request("write_file", content="# Final"),
+            AsyncMock(),
+        )
+
+        assert result.status == "error"
+        assert str(result.content).startswith("writer_output_commit_failed:")
+        assert "internal detail" not in str(result.content)
+        assert tracker.digest is None
+
+    @pytest.mark.asyncio
+    async def test_write_exception_is_sanitized_and_not_recorded(self) -> None:
+        tracker = FinalReportCommitTracker()
+        backend = MagicMock()
+        backend.aupload_files = AsyncMock(side_effect=RuntimeError("sensitive backend detail"))
+        middleware = FinalReportCommitMiddleware(backend=backend, tracker=tracker)
+
+        result = await middleware.awrap_tool_call(
+            self._request("write_file", content="# Final"),
+            AsyncMock(),
+        )
+
+        assert result.status == "error"
+        assert str(result.content).startswith("writer_output_commit_failed:")
+        assert "sensitive backend detail" not in str(result.content)
+        assert tracker.digest is None
+
+    @pytest.mark.asyncio
+    async def test_route_local_alias_is_not_a_writer_destination(self) -> None:
+        middleware = FinalReportCommitMiddleware(backend=MagicMock(), tracker=FinalReportCommitTracker())
+
+        result = await middleware.awrap_tool_call(
+            self._request("write_file", path="/output.md", content="# Final"),
+            AsyncMock(),
+        )
+
+        assert result.status == "error"
+        assert str(result.content).startswith("writer_output_path_invalid:")
+
+    @pytest.mark.asyncio
+    async def test_successful_edit_refreshes_digest_from_downloaded_bytes(self) -> None:
+        tracker = FinalReportCommitTracker()
+        tracker.record("# Baseline")
+        backend = MagicMock()
+        backend.adownload_files = AsyncMock(
+            return_value=[SimpleNamespace(error=None, content=b"# Baseline\n\n![Chart](artifact://chart.png)")]
+        )
+        middleware = FinalReportCommitMiddleware(backend=backend, tracker=tracker)
+        expected = ToolMessage(content="edited", tool_call_id="tc1", status="success")
+
+        result = await middleware.awrap_tool_call(
+            self._request("edit_file", old_string="# Baseline", new_string="# Baseline"),
+            AsyncMock(return_value=expected),
+        )
+
+        assert result is expected
+        assert tracker.committed_text(
+            {"/shared/output.md": {"content": "# Baseline\n\n![Chart](artifact://chart.png)"}}
+        )
+
+    @pytest.mark.asyncio
+    async def test_failed_edit_keeps_previous_digest(self) -> None:
+        tracker = FinalReportCommitTracker()
+        tracker.record("# Baseline")
+        backend = MagicMock()
+        backend.adownload_files = AsyncMock()
+        middleware = FinalReportCommitMiddleware(backend=backend, tracker=tracker)
+        failed = ToolMessage(content="edit failed", tool_call_id="tc1", status="error")
+
+        result = await middleware.awrap_tool_call(
+            self._request("edit_file", old_string="missing", new_string="new"),
+            AsyncMock(return_value=failed),
+        )
+
+        assert result is failed
+        backend.adownload_files.assert_not_awaited()
+        assert tracker.committed_text({"/shared/output.md": {"content": "# Baseline"}}) == "# Baseline"
+
+    @pytest.mark.asyncio
+    async def test_edit_exception_is_sanitized_and_keeps_previous_digest(self) -> None:
+        tracker = FinalReportCommitTracker()
+        tracker.record("# Baseline")
+        backend = MagicMock()
+        backend.adownload_files = AsyncMock()
+        middleware = FinalReportCommitMiddleware(backend=backend, tracker=tracker)
+
+        result = await middleware.awrap_tool_call(
+            self._request("edit_file", old_string="# Baseline", new_string="# Revised"),
+            AsyncMock(side_effect=RuntimeError("sensitive backend detail")),
+        )
+
+        assert result.status == "error"
+        assert str(result.content).startswith("writer_output_commit_failed:")
+        assert "sensitive backend detail" not in str(result.content)
+        backend.adownload_files.assert_not_awaited()
+        assert tracker.committed_text({"/shared/output.md": {"content": "# Baseline"}}) == "# Baseline"
+
+    def test_trackers_do_not_share_commit_state_between_runs(self) -> None:
+        first = FinalReportCommitTracker()
+        second = FinalReportCommitTracker()
+        first.record("# First run")
+
+        assert first.committed_text({"/shared/output.md": {"content": "# First run"}}) == "# First run"
+        assert second.committed_text({"/shared/output.md": {"content": "# First run"}}) is None
+
+
+class TestRequiredOutputFileMiddleware:
+    """The writer may only claim completion after committing the current bytes."""
+
+    marker = "Wrote /shared/output.md"
+
+    @staticmethod
+    def _state(*, files: dict | None = None, messages: list | None = None) -> dict:
+        return {
+            "files": files or {},
+            "messages": messages or [AIMessage(content="Wrote /shared/output.md")],
+        }
+
+    @pytest.mark.parametrize("path", ["/shared/output.md", "/output.md"])
+    @pytest.mark.parametrize("content", ["# Final report\n", "# Final report\r\n"])
+    def test_accepts_committed_output_in_both_backend_path_forms(self, path: str, content: str) -> None:
+        tracker = FinalReportCommitTracker()
+        tracker.record(content)
+        middleware = RequiredOutputFileMiddleware(tracker=tracker)
+        state = self._state(files={path: {"content": content}})
+
+        assert middleware.after_model(state, None) is None
+
+    def test_rejects_non_empty_stale_output_without_writer_mutation(self) -> None:
+        middleware = RequiredOutputFileMiddleware(tracker=FinalReportCommitTracker())
+        state = self._state(files={"/output.md": {"content": "# Planner prose"}})
+
+        update = middleware.after_model(state, None)
+
+        assert update is not None
+        assert update["jump_to"] == "model"
+
+    @pytest.mark.parametrize("content", ["", "   ", b"\n", []])
+    def test_empty_output_requests_one_local_corrective_turn(self, content: object) -> None:
+        middleware = RequiredOutputFileMiddleware(tracker=FinalReportCommitTracker())
+        state = self._state(files={"/output.md": {"content": content}})
+
+        update = middleware.after_model(state, None)
+
+        assert update is not None
+        assert update["jump_to"] == "model"
+        correction = update["messages"][0]
+        assert isinstance(correction, HumanMessage)
+        assert "Call write_file" in str(correction.content)
+        assert "Do not repeat research" in str(correction.content)
+
+    def test_committed_whitespace_only_output_is_still_rejected(self) -> None:
+        content = " \r\n"
+        tracker = FinalReportCommitTracker()
+        tracker.record(content)
+        middleware = RequiredOutputFileMiddleware(tracker=tracker)
+
+        update = middleware.after_model(self._state(files={"/shared/output.md": {"content": content}}), None)
+
+        assert update is not None
+        assert update["jump_to"] == "model"
+
+    def test_rejects_post_commit_tampering(self) -> None:
+        tracker = FinalReportCommitTracker()
+        tracker.record("# Writer report")
+        middleware = RequiredOutputFileMiddleware(tracker=tracker)
+
+        update = middleware.after_model(
+            self._state(files={"/shared/output.md": {"content": "# Modified report"}}),
+            None,
+        )
+
+        assert update is not None
+        assert update["jump_to"] == "model"
+
+    def test_does_not_interrupt_intermediate_tool_call(self) -> None:
+        middleware = RequiredOutputFileMiddleware(tracker=FinalReportCommitTracker())
+        state = self._state(
+            messages=[
+                AIMessage(
+                    content=self.marker,
+                    tool_calls=[{"name": "write_file", "args": {}, "id": "tc1"}],
+                )
+            ]
+        )
+
+        assert middleware.after_model(state, None) is None
+
+    @pytest.mark.asyncio
+    async def test_async_retry_accepts_repaired_route_local_output(self) -> None:
+        tracker = FinalReportCommitTracker()
+        middleware = RequiredOutputFileMiddleware(tracker=tracker)
+        first = middleware.after_model(self._state(), None)
+        correction = first["messages"][0]
+        tracker.record("# Final report")
+        repaired = self._state(
+            files={"/output.md": {"content": "# Final report"}},
+            messages=[AIMessage(content=self.marker), correction, AIMessage(content=self.marker)],
+        )
+
+        assert await middleware.aafter_model(repaired, None) is None
+
+    def test_repeated_false_completion_fails_with_stable_reason_code(self) -> None:
+        middleware = RequiredOutputFileMiddleware(tracker=FinalReportCommitTracker())
+        first = middleware.after_model(self._state(), None)
+        correction = first["messages"][0]
+        still_missing = self._state(
+            messages=[AIMessage(content=self.marker), correction, AIMessage(content=self.marker)]
+        )
+
+        with pytest.raises(RuntimeError, match="^writer_output_not_committed$"):
+            middleware.after_model(still_missing, None)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("shared_route", [False, True])
+    async def test_graph_overwrites_stale_planner_output_and_commits_writer_report(self, shared_route: bool) -> None:
+        """A create-only collision cannot leave planner prose as the final report."""
+        model = _ToolBindingFakeChatModel(
+            responses=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "write_file",
+                            "args": {"file_path": "/shared/output.md", "content": "# Writer report"},
+                            "id": "tc1",
+                        }
+                    ],
+                ),
+                AIMessage(content=self.marker),
+            ]
+        )
+        backend = (
+            CompositeBackend(default=StateBackend(), routes={"/shared/": StateBackend()})
+            if shared_route
+            else StateBackend()
+        )
+        tracker = FinalReportCommitTracker()
+        graph = create_agent(
+            model,
+            tools=[],
+            middleware=[
+                FilesystemMiddleware(backend=backend),
+                FinalReportCommitMiddleware(backend=backend, tracker=tracker),
+                RequiredOutputFileMiddleware(tracker=tracker),
+            ],
+        )
+        stale_path = "/output.md" if shared_route else "/shared/output.md"
+
+        result = await graph.ainvoke(
+            {
+                "messages": [HumanMessage(content="Write the report")],
+                "files": {stale_path: {"content": "# Planner prose"}},
+            }
+        )
+
+        assert result["files"][stale_path]["content"] == "# Writer report"
+        assert tracker.committed_text(result["files"]) == "# Writer report"
+
+    @pytest.mark.asyncio
+    async def test_graph_stops_after_bounded_false_completion_retry(self) -> None:
+        model = _ToolBindingFakeChatModel(
+            responses=[
+                AIMessage(content=self.marker),
+                AIMessage(content=self.marker),
+            ]
+        )
+        tracker = FinalReportCommitTracker()
+        graph = create_agent(
+            model,
+            tools=[],
+            middleware=[FilesystemMiddleware(), RequiredOutputFileMiddleware(tracker=tracker)],
+        )
+
+        with pytest.raises(RuntimeError, match="^writer_output_not_committed"):
+            await graph.ainvoke(
+                {
+                    "messages": [HumanMessage(content="Write the report")],
+                    "files": {"/shared/output.md": {"content": "# Planner prose"}},
+                }
+            )
 
 
 class TestToolNameSanitizationMiddleware:
@@ -774,6 +1216,23 @@ class TestArtifactHarvestMiddleware:
         assert result == "ok"
         assert "RuntimeError" in caplog.text
         assert "credential=do-not-log" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_returns_exact_inline_filename_to_model(self) -> None:
+        manager = MagicMock()
+        manager.harvest_after_execute.return_value = [
+            SimpleNamespace(filename="capex_by_quarter.png", inline=True),
+            SimpleNamespace(filename="capex_by_quarter.csv", inline=False),
+        ]
+        middleware = ArtifactHarvestMiddleware(manager)
+        request = MagicMock()
+        request.tool_call = {"name": "execute"}
+        handler = AsyncMock(return_value=ToolMessage(content="command succeeded", tool_call_id="tc1"))
+
+        result = await middleware.awrap_tool_call(request, handler)
+
+        assert "artifact://capex_by_quarter.png" in result.content
+        assert "capex_by_quarter.csv (downloadable; not marked inline)" in result.content
 
 
 class _RecordingBackend:

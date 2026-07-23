@@ -24,6 +24,11 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.tools import tool
 
 from aiq_agent.agents.deep_researcher.custom_middleware import ArtifactHarvestMiddleware
+from aiq_agent.agents.deep_researcher.custom_middleware import FilesystemToolCallGuardMiddleware
+from aiq_agent.agents.deep_researcher.custom_middleware import FinalReportCommitMiddleware
+from aiq_agent.agents.deep_researcher.custom_middleware import FinalReportCommitTracker
+from aiq_agent.agents.deep_researcher.custom_middleware import FinalReportOwnershipGuardMiddleware
+from aiq_agent.agents.deep_researcher.custom_middleware import RequiredOutputFileMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import SourceRegistryMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import SourceRoutingGuardMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import TodoSuppressionMiddleware
@@ -107,6 +112,7 @@ def _graph_context(
     state: DeepResearchAgentState | None = None,
     provider: LLMProvider | None = None,
     enable_source_router: bool = True,
+    final_report_tracker: FinalReportCommitTracker | None = None,
 ) -> DeepResearchGraphContext:
     _, tool_set, middleware_set = _tool_set_and_middleware()
     runtime = runtime or DeepAgentsRuntime()
@@ -124,6 +130,7 @@ def _graph_context(
         enable_source_router=enable_source_router,
         backend=runtime.backend,
         visibility_middleware=runtime_visibility_middleware(runtime),
+        final_report_tracker=final_report_tracker or FinalReportCommitTracker(),
     )
 
 
@@ -242,6 +249,31 @@ def test_subagents_route_tools_and_writer_skills():
     assert any(isinstance(item, ToolVisibilityMiddleware) for item in by_name["planner-agent"]["middleware"])
     assert any(isinstance(item, ToolVisibilityMiddleware) for item in by_name["writer-agent"]["middleware"])
     assert any(isinstance(item, TodoSuppressionMiddleware) for item in by_name["writer-agent"]["middleware"])
+    assert any(isinstance(item, RequiredOutputFileMiddleware) for item in by_name["writer-agent"]["middleware"])
+
+
+def test_subagents_share_one_run_local_tracker_and_reserve_output_for_writer():
+    """All non-writers are guarded while writer commit and completion share one tracker."""
+    tracker = FinalReportCommitTracker()
+    subagents = build_deep_research_subagents(_graph_context(final_report_tracker=tracker))
+    by_name = {subagent["name"]: subagent for subagent in subagents}
+
+    for name in ("source-router-agent", "planner-agent"):
+        assert any(isinstance(item, FinalReportOwnershipGuardMiddleware) for item in by_name[name]["middleware"])
+        assert not any(isinstance(item, FinalReportCommitMiddleware) for item in by_name[name]["middleware"])
+        assert not any(isinstance(item, RequiredOutputFileMiddleware) for item in by_name[name]["middleware"])
+
+    writer_commit = next(
+        item for item in by_name["writer-agent"]["middleware"] if isinstance(item, FinalReportCommitMiddleware)
+    )
+    writer_completion = next(
+        item for item in by_name["writer-agent"]["middleware"] if isinstance(item, RequiredOutputFileMiddleware)
+    )
+    assert writer_commit.tracker is tracker
+    assert writer_completion.tracker is tracker
+    assert not any(
+        isinstance(item, FinalReportOwnershipGuardMiddleware) for item in by_name["writer-agent"]["middleware"]
+    )
 
 
 def test_skill_filesystem_permissions_filter_unassigned_skill_collections():
@@ -283,11 +315,62 @@ def test_graph_uses_researcher_config_key_for_researcher_skills():
             callbacks=[],
             domain_catalog_path=None,
             max_research_concurrency=6,
+            final_report_tracker=FinalReportCommitTracker(),
         )
 
     researcher_middleware = create_researcher.call_args.kwargs["middleware"]
     skills_middleware = [item for item in researcher_middleware if item.__class__.__name__ == "SkillsMiddleware"]
     assert skills_middleware[0].sources == ["/skills/research/"]
+
+
+def test_graph_wires_filesystem_tool_call_guard_cross_cutting():
+    """Every agent receives the filesystem path guard, even when execution is hidden."""
+    registry, tool_set, middleware_set = _tool_set_and_middleware()
+    runtime = DeepAgentsRuntime()
+    fake_graph = MagicMock()
+    fake_graph.with_config.return_value = fake_graph
+
+    with (
+        patch("aiq_agent.agents.deep_researcher.factory.create_deep_agent", return_value=fake_graph) as create_graph,
+        patch(
+            "aiq_agent.agents.deep_researcher.factory.create_agent",
+            return_value=MagicMock(),
+        ) as create_researcher,
+        patch("aiq_agent.agents.deep_researcher.factory.create_summarization_middleware", return_value=MagicMock()),
+    ):
+        build_deep_research_graph(
+            llm_provider=_llm_provider(),
+            state=DeepResearchAgentState(messages=[]),
+            prompts=_prompts(),
+            tools=[web_search_tool],
+            runtime=runtime,
+            tool_set=tool_set,
+            middleware_set=middleware_set,
+            source_registry_middleware=registry,
+            callbacks=[],
+            domain_catalog_path=None,
+            max_research_concurrency=6,
+            final_report_tracker=FinalReportCommitTracker(),
+        )
+
+    assert any(
+        isinstance(middleware, FilesystemToolCallGuardMiddleware)
+        for middleware in create_graph.call_args.kwargs["middleware"]
+    )
+    assert any(
+        isinstance(middleware, FinalReportOwnershipGuardMiddleware)
+        for middleware in create_graph.call_args.kwargs["middleware"]
+    )
+    assert any(
+        isinstance(middleware, FinalReportOwnershipGuardMiddleware)
+        for middleware in create_researcher.call_args.kwargs["middleware"]
+    )
+    for middleware_stack in (
+        create_graph.call_args.kwargs["middleware"],
+        create_researcher.call_args.kwargs["middleware"],
+    ):
+        assert not any(isinstance(middleware, FinalReportCommitMiddleware) for middleware in middleware_stack)
+        assert not any(isinstance(middleware, RequiredOutputFileMiddleware) for middleware in middleware_stack)
 
 
 def test_subagents_can_disable_source_router():
