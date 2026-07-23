@@ -26,6 +26,8 @@ from pathlib import Path
 
 import pytest
 
+from aiq_agent.common import render_prompt_template
+
 _AGENTS = Path(__file__).resolve().parents[3] / "src" / "aiq_agent" / "agents"
 _PROMPTS = {
     "shallow": _AGENTS / "shallow_researcher" / "prompts" / "researcher.j2",
@@ -63,6 +65,7 @@ def test_prompt_carousel_examples_match_the_schema(prompt_key: str) -> None:
         assert len(carousel["charts"]) >= 2
         for chart in carousel["charts"]:
             assert chart["type"] == "line"
+            assert chart["title"], f"{prompt_key} carousel child is missing a non-empty title"
             assert chart["x"]["key"]
             assert chart["series"] and all(s["key"] for s in chart["series"])
             assert chart["data"] and all(isinstance(row, dict) for row in chart["data"])
@@ -90,3 +93,32 @@ def test_prompt_chart_examples_match_the_schema(prompt_key: str) -> None:
 
     assert saw_full_chart, f"{prompt_key} prompt should show a full chart example"
     assert saw_kpi_only, f"{prompt_key} prompt should show a KPI-only example"
+
+
+_WRITER_RENDER_CONTEXT = {
+    "current_datetime": "2026-01-01T00:00:00Z",
+    "user_info": None,
+    "parent_report_context_available": False,
+    "sandbox_workdir": "/sandbox/workdir",
+    "sandbox_artifact_dir": "/sandbox/artifacts",
+}
+
+
+def _render_writer(*, execution_enabled: bool) -> str:
+    return render_prompt_template(
+        _PROMPTS["writer"].read_text(),
+        execution_enabled=execution_enabled,
+        **_WRITER_RENDER_CONTEXT,
+    )
+
+
+def test_writer_gates_inline_charts_to_the_non_sandbox_path() -> None:
+    with_sandbox = _render_writer(execution_enabled=True)
+    assert "## Figures" in with_sandbox
+    assert "## Presenting Data" not in with_sandbox
+    assert "```chart" not in with_sandbox
+
+    without_sandbox = _render_writer(execution_enabled=False)
+    assert "## Presenting Data (Charts)" in without_sandbox
+    assert "```chart" in without_sandbox
+    assert "## Figures" not in without_sandbox

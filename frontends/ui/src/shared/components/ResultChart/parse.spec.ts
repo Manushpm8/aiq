@@ -3,6 +3,7 @@
 
 import { describe, expect, test } from 'vitest'
 import { fenceBareSpecs, parseCarouselSpec, parseChartSpec, parseKpiSpec, toNumber } from './parse'
+import { ChartSpecSchema } from './types'
 
 const barSpec = {
   type: 'bar',
@@ -25,7 +26,11 @@ describe('toNumber', () => {
   test('numeric-ish strings are cleaned', () => {
     expect(toNumber('1,234')).toBe(1234)
     expect(toNumber('$1200')).toBe(1200)
-    expect(toNumber('94%')).toBe(94)
+  })
+
+  test('a trailing percent is read as a fraction', () => {
+    expect(toNumber('94%')).toBe(0.94)
+    expect(toNumber('100%')).toBe(1)
   })
 
   test('empty, non-numeric, and other types are null', () => {
@@ -63,6 +68,30 @@ describe('parseChartSpec', () => {
       ],
     }
     expect(parseChartSpec(JSON.stringify(spec))).toBeNull()
+  })
+
+  test('null when any series has no numeric data', () => {
+    const spec = {
+      ...barSpec,
+      series: [{ key: 'count' }, { key: 'trend' }],
+      data: [
+        { model: 'H100', count: 10, trend: 'n/a' },
+        { model: 'A100', count: 5, trend: null },
+      ],
+    }
+    expect(parseChartSpec(JSON.stringify(spec))).toBeNull()
+  })
+})
+
+describe('ChartSpecSchema delta refinement', () => {
+  test('a delta chart accepts exactly one series', () => {
+    const spec = { ...barSpec, type: 'delta', series: [{ key: 'count' }] }
+    expect(ChartSpecSchema.safeParse(spec).success).toBe(true)
+  })
+
+  test('a delta chart with more than one series is rejected', () => {
+    const spec = { ...barSpec, type: 'delta', series: [{ key: 'count' }, { key: 'other' }] }
+    expect(ChartSpecSchema.safeParse(spec).success).toBe(false)
   })
 })
 

@@ -18,14 +18,21 @@ function parseJson(raw: string): unknown {
   }
 }
 
-/** Coerce a cell value (number, or a numeric-ish string like "11,463" or "$1.2M") to a number. */
+/**
+ * Coerce a cell value (number, or a numeric-ish string like "11,463" or "$1.2M")
+ * to a number. A trailing "%" denotes a fraction, so "94%" becomes 0.94 to match
+ * the `percent` format contract (data is fractions 0-1); "$", ",", and whitespace
+ * are stripped without rescaling.
+ */
 export function toNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null
   if (typeof value === 'string') {
+    const isPercent = value.trimEnd().endsWith('%')
     const cleaned = value.replace(/[,$\s%]/g, '')
     if (cleaned === '') return null
     const parsed = Number(cleaned)
-    return Number.isFinite(parsed) ? parsed : null
+    if (!Number.isFinite(parsed)) return null
+    return isPercent ? parsed / 100 : parsed
   }
   return null
 }
@@ -40,12 +47,12 @@ export function parseChartSpec(raw: string): ChartSpec | null {
   if (!parsed.success) return null
   const spec = parsed.data
 
-  // The x key must resolve on at least one row, and at least one series must
-  // carry usable numeric data, otherwise there is nothing meaningful to draw.
+  // The x key must resolve on at least one row, and every series must carry at
+  // least one numeric value, otherwise there is nothing meaningful to draw.
   const hasX = spec.data.some((row) => row[spec.x.key] != null && row[spec.x.key] !== '')
   if (!hasX) return null
-  const hasNumeric = spec.series.some((s) => spec.data.some((row) => toNumber(row[s.key]) != null))
-  if (!hasNumeric) return null
+  const everySeriesNumeric = spec.series.every((s) => spec.data.some((row) => toNumber(row[s.key]) != null))
+  if (!everySeriesNumeric) return null
 
   return spec
 }

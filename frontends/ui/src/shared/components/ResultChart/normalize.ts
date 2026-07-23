@@ -38,16 +38,18 @@ function rowMagnitude(spec: ChartSpec, row: ChartSpec['data'][number]): number {
 /**
  * When a single-series chart would compare nothing, return the KPI tiles to show
  * instead; otherwise return null (draw the chart). Two objective cases: a single
- * plottable value, or a near-constant metric where every bar is the same height.
- * Prefers the spec's own `kpis` when present.
+ * plotted point (only one row carries the x key), or a near-constant metric where
+ * every bar is the same height. A multi-row chart with sparse values stays a
+ * chart so its missing points render as gaps. Prefers the spec's own `kpis`.
  */
 export function degenerateKpis(spec: ChartSpec): ChartKpi[] | null {
   if (spec.series.length !== 1) return null
   const key = spec.series[0].key
   const fmt = spec.y?.format ?? 'number'
   const values = numericValues(spec, key)
+  const points = spec.data.filter((row) => row[spec.x.key] != null && row[spec.x.key] !== '').length
 
-  if (values.length <= 1) {
+  if (points <= 1) {
     if (spec.kpis && spec.kpis.length > 0) return spec.kpis
     const row = spec.data.find((r) => toNumber(r[key]) != null)
     if (!row) return [{ label: spec.title, value: '–' }]

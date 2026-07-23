@@ -28,7 +28,7 @@ const CellSchema = z.union([z.string(), z.number(), z.null()])
  * agent chooses the type, encodings, data and formatting; the frontend owns the
  * rendering style, dimensions and safe axis defaults.
  */
-export const ChartSpecSchema = z.object({
+const ChartSpecObjectSchema = z.object({
   type: z.enum(CHART_TYPES),
   title: z.string().min(1),
   subtitle: z.string().optional(),
@@ -41,7 +41,16 @@ export const ChartSpecSchema = z.object({
   kpis: z.array(KpiSchema).max(4).optional(),
 })
 
-const LineChartSpecSchema = ChartSpecSchema.extend({ type: z.literal('line') })
+/**
+ * A `delta` chart colors its bars by sign with no legend, so it can encode only a
+ * single series; more than one would be indistinguishable.
+ */
+export const ChartSpecSchema = ChartSpecObjectSchema.refine(
+  (spec) => spec.type !== 'delta' || spec.series.length === 1,
+  { message: 'a delta chart must declare exactly one series', path: ['series'] },
+)
+
+const LineChartSpecSchema = ChartSpecObjectSchema.extend({ type: z.literal('line') })
 
 /** A pageable set of related line charts emitted in a ```chart-carousel block. */
 export const ChartCarouselSpecSchema = z.object({

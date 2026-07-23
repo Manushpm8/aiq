@@ -89,7 +89,10 @@ For a single value or a one-entity result where a chart would compare nothing:
   "charts": [
     { "type": "line", "title": "Baseline vs Prediction", "x": { "key": "month" }, "y": { "format": "currency" },
       "series": [{ "key": "baseline", "color": "neutral" }, { "key": "prediction", "color": "green" }],
-      "data": [ { "month": "Jan", "baseline": 5200000, "prediction": 5300000 } ] }
+      "data": [ { "month": "Jan", "baseline": 5200000, "prediction": 5300000 } ] },
+    { "type": "line", "title": "Units Shipped", "x": { "key": "month" }, "y": { "format": "compact" },
+      "series": [{ "key": "units", "color": "blue" }],
+      "data": [ { "month": "Jan", "units": 1800 } ] }
   ]
 }
 ```

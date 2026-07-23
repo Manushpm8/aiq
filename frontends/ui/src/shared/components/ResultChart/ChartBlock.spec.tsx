@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from 'vitest'
-import { render, screen } from '@/test-utils'
+import { render, screen, within } from '@/test-utils'
 import { ChartBlock } from './ChartBlock'
 
 const bar = {
@@ -37,6 +37,21 @@ describe('ChartBlock', () => {
   test('renders a KPI-only spec as a card', () => {
     render(<ChartBlock raw={JSON.stringify({ title: 'Churn', kpis: [{ label: 'Rate', value: '12%' }] })} />)
     expect(screen.getByText('Rate')).toBeInTheDocument()
+  })
+
+  test('a percent chart renders "94%" from both "94%" string data and 0.94 numeric data', () => {
+    const pctSpec = (rate: unknown) => ({
+      type: 'bar',
+      title: 'On-time rate',
+      x: { key: 'model' },
+      y: { format: 'percent' },
+      series: [{ key: 'rate' }],
+      data: [{ model: 'H100', rate }],
+    })
+    const fromString = render(<ChartBlock raw={JSON.stringify(pctSpec('94%'))} />)
+    expect(within(fromString.container).getByText('94%')).toBeInTheDocument()
+    const fromNumber = render(<ChartBlock raw={JSON.stringify(pctSpec(0.94))} />)
+    expect(within(fromNumber.container).getByText('94%')).toBeInTheDocument()
   })
 
   test('applies truncation for oversized rankings', () => {

@@ -39,6 +39,16 @@ describe('degenerateKpis', () => {
     expect(kpis).toEqual([{ label: 'T', value: '42', sub: undefined, tone: 'accent' }])
   })
 
+  test('a genuine single-row spec still becomes a KPI', () => {
+    const kpis = degenerateKpis(spec({ data: [{ cat: 'solo', v: 7 }] }))
+    expect(kpis).toEqual([{ label: 'T', value: '7', sub: 'solo', tone: 'accent' }])
+  })
+
+  test('a multi-row sparse chart with one numeric point stays a chart', () => {
+    const sparse = spec({ data: [{ cat: 'a', v: 10 }, { cat: 'b', v: null }, { cat: 'c', v: null }] })
+    expect(degenerateKpis(sparse)).toBeNull()
+  })
+
   test('all-null single-series data yields a placeholder tile', () => {
     const kpis = degenerateKpis(spec({ data: [{ cat: 'a', v: null }] }))
     expect(kpis).toEqual([{ label: 'T', value: '–' }])
