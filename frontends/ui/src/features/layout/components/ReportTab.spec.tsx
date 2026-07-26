@@ -33,6 +33,13 @@ vi.mock('./ExportFooter', () => ({
   ExportFooter: () => <div data-testid="export-footer">Export Footer</div>,
 }))
 
+// Mock SourceStrip so the structured-citations path renders hermetically
+vi.mock('@/shared/components/Sources/SourceStrip', () => ({
+  SourceStrip: ({ sources }: { sources: unknown[] }) => (
+    <div data-testid="source-strip">{sources.length} sources</div>
+  ),
+}))
+
 vi.mock('./FileCard', () => ({
   FileCard: ({ file }: { file: { name: string } }) => (
     <div data-testid="file-card">{file.name}</div>
@@ -113,6 +120,46 @@ describe('ReportTab', () => {
     render(<ReportTab />)
 
     expect(screen.getByTestId('export-footer')).toBeInTheDocument()
+  })
+
+  test('preserves markdown citations when there are no structured deep-research citations', () => {
+    vi.mocked(useChatStore).mockImplementation((selector?: (s: any) => any) => {
+      const state = {
+        reportContent:
+          'The sky is blue [1].\n\n## Sources\n- [1] Sky facts - https://example.com/sky',
+        isStreaming: false,
+        currentStatus: null,
+        deepResearchCitations: [],
+      }
+      return selector ? selector(state) : state
+    })
+
+    render(<ReportTab />)
+
+    const markdown = screen.getByTestId('markdown')
+    expect(markdown).toHaveTextContent('Sources')
+    expect(markdown).toHaveTextContent('https://example.com/sky')
+  })
+
+  test('strips the redundant markdown references when structured citations exist', () => {
+    vi.mocked(useChatStore).mockImplementation((selector?: (s: any) => any) => {
+      const state = {
+        reportContent:
+          'The sky is blue [1].\n\n## Sources\n- [1] Sky facts - https://example.com/sky',
+        isStreaming: false,
+        currentStatus: null,
+        deepResearchCitations: [
+          { id: 'c1', url: 'https://example.com/sky', content: 'Sky facts', isCited: true },
+        ],
+      }
+      return selector ? selector(state) : state
+    })
+
+    render(<ReportTab />)
+
+    const markdown = screen.getByTestId('markdown')
+    expect(markdown).not.toHaveTextContent('example.com')
+    expect(screen.getByTestId('source-strip')).toBeInTheDocument()
   })
 
   test('bounds the expanded generated-files list with a scroll area', async () => {

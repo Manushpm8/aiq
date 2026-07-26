@@ -58,7 +58,11 @@ export const ReportTab: FC<ReportTabProps> = ({ children }) => {
   }, [deepResearchCitations])
 
   const reportContentStr = typeof reportContent === 'string' ? reportContent : ''
-  const reportBody = useMemo(() => stripTrailingReferences(reportContentStr), [reportContentStr])
+  const hasStructuredCitations = sources.length > 0
+  const reportBody = useMemo(
+    () => (hasStructuredCitations ? stripTrailingReferences(reportContentStr) : reportContentStr),
+    [reportContentStr, hasStructuredCitations]
+  )
   const isEmpty = !reportContentStr.trim()
   const isGeneratingReport = isStreaming && currentStatus === 'writing'
   const isResearchNotes = reportContentCategory === 'research_notes'

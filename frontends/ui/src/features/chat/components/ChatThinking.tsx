@@ -534,15 +534,56 @@ const PhaseRow: FC<{
 }
 
 /**
- * Map a tool/step function name to the data source it belongs to, so the "Using"
- * chips reflect the sources the answer ACTUALLY used (from its tool calls) rather
- * than everything that was enabled. Returns null for non-tool steps.
+ * Generic tokens that recur across unrelated tool and source names, so they
+ * carry no source-identity signal and are ignored when matching a tool to a
+ * configured source.
  */
-const toolNameToSourceId = (functionName: string): string | null => {
+const GENERIC_SOURCE_TOKENS = new Set([
+  'tool',
+  'tools',
+  'search',
+  'retrieval',
+  'retrieve',
+  'layer',
+  'agent',
+  'api',
+  'mcp',
+  'query',
+  'lookup',
+  'fetch',
+  'get',
+  'advanced',
+])
+
+const sourceTokens = (value: string): Set<string> =>
+  new Set(
+    (value || '')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((token) => token.length > 0 && !GENERIC_SOURCE_TOKENS.has(token))
+  )
+
+/**
+ * Best-effort, dynamic match of a tool/step function name to a configured data
+ * source id. The frontend never receives the backend's authoritative
+ * tool->source map (see the backend data_source_registry), so a tool is
+ * attributed to a source when its function name contains the source id or shares
+ * a meaningful (non-generic) token with it. This resolves ANY user-configured
+ * source whose tools are named after it (`confluence_search` -> `confluence`,
+ * `web_search_tool` -> `web_search`, `knowledge_retrieval` -> `knowledge_layer`,
+ * `eci__gdrive` -> `gdrive`) rather than a fixed set of sources.
+ */
+const toolMatchesSource = (functionName: string, sourceId: string): boolean => {
   const name = (functionName || '').toLowerCase().replace(/^tool:\s*/, '')
-  if (name.includes('web_search') || name.includes('tavily')) return 'web_search'
-  if (name.includes('knowledge')) return 'knowledge_layer'
-  return null
+  const id = sourceId.toLowerCase()
+  if (!name || !id) return false
+  if (name.includes(id) || id.includes(name)) return true
+  const nameTokens = sourceTokens(name)
+  if (nameTokens.size === 0) return false
+  for (const token of sourceTokens(id)) {
+    if (nameTokens.has(token)) return true
+  }
+  return false
 }
 
 /**
@@ -613,14 +654,15 @@ export const ChatThinking: FC<ChatThinkingProps> = ({
     [visibleSteps]
   )
 
-  const usedSources = useMemo(() => {
-    const used = new Set<string>()
-    for (const step of visibleSteps) {
-      const id = toolNameToSourceId(step.functionName)
-      if (id) used.add(id)
-    }
-    return enabledDataSources.filter((source) => source !== 'knowledge_layer' && used.has(source))
-  }, [visibleSteps, enabledDataSources])
+  const usedSources = useMemo(
+    () =>
+      enabledDataSources.filter(
+        (source) =>
+          source !== 'knowledge_layer' &&
+          visibleSteps.some((step) => toolMatchesSource(step.functionName, source))
+      ),
+    [visibleSteps, enabledDataSources]
+  )
   const hasDataSources = usedSources.length > 0
   const hasFiles = messageFiles.length > 0
 

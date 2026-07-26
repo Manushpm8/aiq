@@ -173,6 +173,31 @@ describe('ChatThinking', () => {
       expect(screen.queryByText('Confluence')).not.toBeInTheDocument()
     })
 
+    test('surfaces an arbitrary user-configured source dynamically (not a fixed web/knowledge map)', () => {
+      render(
+        <ChatThinking
+          steps={[createStep({ functionName: 'confluence_search' })]}
+          isThinking={false}
+          enabledDataSources={['confluence', 'web_search']}
+        />
+      )
+
+      expect(screen.getByText('Confluence')).toBeInTheDocument()
+      expect(screen.queryByText('Web Search')).not.toBeInTheDocument()
+    })
+
+    test('resolves a function-group tool to its source via a shared token', () => {
+      render(
+        <ChatThinking
+          steps={[createStep({ functionName: 'eci__gdrive_get_file' })]}
+          isThinking={false}
+          enabledDataSources={['gdrive']}
+        />
+      )
+
+      expect(screen.getByText('Google Drive')).toBeInTheDocument()
+    })
+
     test('shows message files as source chips', () => {
       render(
         <ChatThinking
