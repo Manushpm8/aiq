@@ -189,6 +189,11 @@ functions:
     max_llm_turns: 10
     max_tool_iterations: 5
 
+  deep_research_skills:
+    _type: deep_research_skills
+    agents:
+      writer-agent: [visualization]
+
   deep_research_agent:
     _type: deep_research_agent
     enable_citation_verification: true
@@ -201,6 +206,7 @@ functions:
     exclude_tools:                     # Remove basic variant; deep uses advanced_web_search_tool
       - web_search_tool
     verbose: true
+    skills: deep_research_skills
 
 workflow:
   _type: chat_deepresearcher_agent

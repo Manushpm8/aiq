@@ -46,7 +46,14 @@ SYNTHESIS_SKILL_SOURCE = f"{BUILTIN_SKILL_SOURCE}synthesis/"
 
 
 def test_openshell_workflow_only_diverges_for_sandbox_wiring() -> None:
-    """Keep the OpenShell workflow aligned with the standard web config."""
+    """Keep the OpenShell workflow aligned with the standard web config.
+
+    Both configs now wire the on-demand visualization skill, so the skill
+    wiring is dropped from each before the structural comparison. OpenShell's
+    skills block additionally carries the sandbox-gated research and synthesis
+    collections, leaving the sandbox function and its agent ref as the only
+    remaining divergence.
+    """
 
     def load(path: str) -> dict[str, Any]:
         text = Path(path).read_text(encoding="utf-8")
@@ -55,16 +62,24 @@ def test_openshell_workflow_only_diverges_for_sandbox_wiring() -> None:
 
     standard = load("configs/config_web_default_llamaindex.yml")
     openshell = load("configs/config_openshell.yml")
+
+    standard_functions = standard["functions"].copy()
     openshell_functions = openshell["functions"].copy()
+
+    assert standard_functions.pop("deep_research_skills") == {
+        "_type": "deep_research_skills",
+        "agents": {"writer-agent": ["visualization"]},
+    }
     openshell_functions.pop("deep_research_skills")
     openshell_functions.pop("deep_research_sandbox")
-    openshell_functions["deep_research_agent"] = openshell_functions["deep_research_agent"].copy()
-    openshell_functions["deep_research_agent"].pop("skills")
+    for functions in (standard_functions, openshell_functions):
+        functions["deep_research_agent"] = functions["deep_research_agent"].copy()
+        functions["deep_research_agent"].pop("skills")
     openshell_functions["deep_research_agent"].pop("sandbox")
 
     assert openshell["general"] == standard["general"]
     assert openshell["llms"] == standard["llms"]
-    assert openshell_functions == standard["functions"]
+    assert openshell_functions == standard_functions
     assert openshell["workflow"] == standard["workflow"]
 
 
@@ -100,6 +115,7 @@ class TestSkillCollections:
 
         assert collections["research"] == "/skills/research/"
         assert collections["synthesis"] == "/skills/synthesis/"
+        assert collections["visualization"] == "/skills/visualization/"
 
     def test_nested_skill_collections_are_discovered(self, tmp_path) -> None:
         skill_dir = tmp_path / "finance" / "earnings" / "quarterly-summary"

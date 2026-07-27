@@ -13,7 +13,7 @@ _AGENT_ROOT = Path(__file__).parents[4] / "src" / "aiq_agent" / "agents" / "deep
 
 
 def test_chart_skill_uses_runtime_argument_instead_of_executable_placeholder() -> None:
-    skill = (_AGENT_ROOT / "skills" / "research" / "chart-generation" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (_AGENT_ROOT / "skills" / "visualization" / "chart-generation" / "SKILL.md").read_text(encoding="utf-8")
 
     assert 'ARTIFACT_DIR = "<sandbox_artifact_dir>"' not in skill
     assert '"path": "<sandbox_artifact_dir>' not in skill
@@ -26,6 +26,7 @@ def test_writer_runs_chart_script_with_rendered_per_job_paths() -> None:
     rendered = render_prompt_template(
         prompt,
         current_datetime="2026-07-09",
+        skills_enabled=True,
         execution_enabled=True,
         parent_report_context_available=False,
         sandbox_workdir="/sandbox/job-123",
