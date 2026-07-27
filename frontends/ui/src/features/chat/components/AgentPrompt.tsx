@@ -107,6 +107,8 @@ function parsePlanPreview(content: string): PlanPreviewData {
 export interface AgentPromptProps {
   /** Unique identifier for this prompt */
   id: string
+  /** Backend interaction id this prompt answers; gates the live controls to the current pending interaction. */
+  interactionId?: string
   /** Type of prompt */
   type: PromptType
   /** Main content/question from the agent */
@@ -141,6 +143,7 @@ export interface AgentPromptProps {
  * response has been given.
  */
 export const AgentPrompt: FC<AgentPromptProps> = ({
+  interactionId,
   type,
   content,
   options = [],
@@ -149,9 +152,12 @@ export const AgentPrompt: FC<AgentPromptProps> = ({
   variant = 'default',
 }) => {
   const respondToInteractionFn = useChatStore((state) => state.respondToInteractionFn)
+  const pendingInteraction = useChatStore((state) => state.pendingInteraction)
   const isApprovalPrompt =
     type === 'approval' || type === 'plan_approval' || APPROVAL_PROMPT_RE.test(content)
-  const canRespond = !isResponded && !!respondToInteractionFn
+  const isForeignInteraction =
+    !!interactionId && !!pendingInteraction && pendingInteraction.id !== interactionId
+  const canRespond = !isResponded && !!respondToInteractionFn && !isForeignInteraction
   const showApprovalButtons = isApprovalPrompt && canRespond
 
   const respond = useCallback(

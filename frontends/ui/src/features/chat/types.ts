@@ -639,8 +639,6 @@ export interface ChatActions {
   setLoadedJobId: (jobId: string) => void
   /** Mark that full stream data has been loaded for current job */
   setStreamLoaded: (loaded: boolean) => void
-  /** Rehydrate live deep-research state from a persisted message's saved agents/tool calls */
-  hydrateDeepResearchFromMessage: (jobId: string) => boolean
 
   // Deep research ThinkingTab actions (LLM steps, agents, tool calls, files)
 

@@ -1230,10 +1230,7 @@ export const useChatStore = create<ChatStore>()(
 
         getThinkingStepsForMessage: (userMessageId: string) => {
           const { thinkingSteps } = get()
-          // Filter out deep research steps - they're displayed in the Research Panel, not ChatThinking
-          return thinkingSteps.filter(
-            (step) => step.userMessageId === userMessageId && !step.isDeepResearch
-          )
+          return thinkingSteps.filter((step) => step.userMessageId === userMessageId)
         },
 
         appendToThinkingStep: (stepId: string, content: string) => {
@@ -2405,44 +2402,6 @@ export const useChatStore = create<ChatStore>()(
 
         setStreamLoaded: (loaded: boolean) => {
           set({ deepResearchStreamLoaded: loaded }, false, 'setStreamLoaded')
-        },
-
-        hydrateDeepResearchFromMessage: (jobId: string): boolean => {
-          const { currentConversation, conversations, currentUserId } = get()
-          const findInConversation = (conv?: Conversation | null): ChatMessage | undefined =>
-            [...(conv?.messages ?? [])].reverse().find(
-              (m) =>
-                m.deepResearchJobId === jobId &&
-                ((m.deepResearchToolCalls?.length ?? 0) > 0 ||
-                  (m.deepResearchAgents?.length ?? 0) > 0)
-            )
-
-          const ownConversations = conversations.filter((c) => c.userId === currentUserId)
-          const message =
-            findInConversation(currentConversation) ??
-            ownConversations.map(findInConversation).find(Boolean)
-
-          if (!message) return false
-
-          set(
-            {
-              deepResearchJobId: jobId,
-              deepResearchToolCalls: message.deepResearchToolCalls
-                ? [...message.deepResearchToolCalls]
-                : [],
-              deepResearchAgents: message.deepResearchAgents ? [...message.deepResearchAgents] : [],
-              deepResearchLLMSteps: message.deepResearchLLMSteps
-                ? [...message.deepResearchLLMSteps]
-                : [],
-              deepResearchFiles: message.deepResearchFiles ? [...message.deepResearchFiles] : [],
-              deepResearchCitations: message.citations ? [...message.citations] : [],
-              deepResearchTodos: message.deepResearchTodos ? [...message.deepResearchTodos] : [],
-              deepResearchStreamLoaded: true,
-            },
-            false,
-            'hydrateDeepResearchFromMessage'
-          )
-          return true
         },
 
         setDeepResearchLastEventId: (eventId: string | null) => {

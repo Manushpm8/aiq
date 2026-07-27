@@ -23,6 +23,16 @@ describe('CollapsibleBlock', () => {
     expect(screen.queryByText('Body content')).not.toBeInTheDocument()
   })
 
+  test('drops aria-controls while collapsed so it never points at an unmounted region', () => {
+    render(<Harness />)
+    const toggle = screen.getByRole('button', { name: 'Trace' })
+    expect(toggle).not.toHaveAttribute('aria-controls')
+    fireEvent.click(toggle)
+    const regionId = toggle.getAttribute('aria-controls')
+    expect(regionId).toBeTruthy()
+    expect(document.getElementById(regionId as string)).not.toBeNull()
+  })
+
   test('toggles the body open and reveals it via the header button', () => {
     render(<Harness />)
     const toggle = screen.getByRole('button', { name: 'Trace' })

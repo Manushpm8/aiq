@@ -8,39 +8,7 @@ import {
   renumberOrderedLists,
   nestBulletsUnderOrderedItems,
   stripTrailingReferences,
-  extractSchemaTables,
 } from './parse-references'
-
-describe('extractSchemaTables', () => {
-  const diagram = [
-    'Here is the schema:',
-    '',
-    '```mermaid',
-    'erDiagram',
-    '  customers ||--o{ sales_orders : places',
-    '  sales_orders ||--|{ order_lines : contains',
-    '  customers {',
-    '    string customer_id',
-    '    string segment',
-    '  }',
-    '  sales_orders {',
-    '    string order_id',
-    '  }',
-    '  order_lines {',
-    '    string line_id',
-    '  }',
-    '```',
-  ].join('\n')
-
-  test('pulls table names from entity blocks and relationships, sorted and de-duped', () => {
-    expect(extractSchemaTables(diagram)).toEqual(['customers', 'order_lines', 'sales_orders'])
-  })
-
-  test('returns empty for content with no mermaid ER diagram', () => {
-    expect(extractSchemaTables('just a normal answer with no diagram')).toEqual([])
-    expect(extractSchemaTables('```mermaid\nflowchart TD\n A --> B\n```')).toEqual([])
-  })
-})
 
 describe('nestBulletsUnderOrderedItems', () => {
   test('indents bullets that follow a numbered item so they nest under it', () => {
@@ -157,6 +125,28 @@ describe('splitReferences', () => {
       'Body.\n\n**References**\n- [2] Second - https://b.example.com\n- [1] First - https://a.example.com'
     const { sources } = splitReferences(content)
     expect(sources.map((s) => s.title)).toEqual(['First', 'Second'])
+  })
+
+  test('carries the real [N] marker on each source as its index', () => {
+    const content =
+      'Body.\n\n**References**\n- [1] First - https://a.example.com\n- [2] Second - https://b.example.com'
+    const { sources } = splitReferences(content)
+    expect(sources.map((s) => s.index)).toEqual([1, 2])
+  })
+
+  test('preserves the real index when numbering starts at [2]', () => {
+    const content = 'Body [2].\n\n**References**\n- [2] Only source - https://a.example.com'
+    const { sources } = splitReferences(content)
+    expect(sources).toHaveLength(1)
+    expect(sources[0]).toMatchObject({ index: 2, title: 'Only source' })
+  })
+
+  test('preserves the real index across a gap ([1] then [3])', () => {
+    const content =
+      'Body [1] and [3].\n\n**References**\n- [1] First - https://a.example.com\n- [3] Third - https://c.example.com'
+    const { sources } = splitReferences(content)
+    expect(sources.map((s) => s.index)).toEqual([1, 3])
+    expect(sources.map((s) => s.title)).toEqual(['First', 'Third'])
   })
 
   test('leaves content intact when the block has no parseable lines', () => {

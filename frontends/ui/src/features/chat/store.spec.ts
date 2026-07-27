@@ -1483,13 +1483,11 @@ describe('useChatStore', () => {
       expect(stepsForMessage2[0].functionName).toBe('tool1')
     })
 
-    test('getThinkingStepsForMessage filters out deep research steps', () => {
+    test('getThinkingStepsForMessage includes deep research steps so the inline trace mirrors the live run', () => {
       useChatStore.getState().setCurrentUser('test-user')
 
-      // Add user message
       const message = useChatStore.getState().addUserMessage('Test message')
 
-      // Add WebSocket thinking step (should be included)
       useChatStore.getState().addThinkingStep({
         category: 'agents',
         functionName: 'websocket_agent',
@@ -1499,7 +1497,6 @@ describe('useChatStore', () => {
         isDeepResearch: false,
       })
 
-      // Add deep research thinking step (should be filtered out)
       useChatStore.getState().addThinkingStep({
         category: 'agents',
         functionName: 'deep_research_agent',
@@ -1509,13 +1506,14 @@ describe('useChatStore', () => {
         isDeepResearch: true,
       })
 
-      // Get steps for the message
-      const steps = useChatStore.getState().getThinkingStepsForMessage(message.id)
+      const ephemeral = useChatStore.getState().getThinkingStepsForMessage(message.id)
+      const persisted =
+        useChatStore
+          .getState()
+          .currentConversation?.messages.find((m) => m.id === message.id)?.thinkingSteps ?? []
 
-      // Should only include the WebSocket step, not the deep research step
-      expect(steps).toHaveLength(1)
-      expect(steps[0].functionName).toBe('websocket_agent')
-      expect(steps[0].isDeepResearch).toBe(false)
+      expect(ephemeral.map((s) => s.functionName)).toEqual(['websocket_agent', 'deep_research_agent'])
+      expect(persisted.map((s) => s.functionName)).toEqual(['websocket_agent', 'deep_research_agent'])
     })
   })
 
@@ -2309,66 +2307,4 @@ describe('useChatStore', () => {
     })
   })
 
-  describe('hydrateDeepResearchFromMessage', () => {
-    test('rehydrates live state from a message with saved agents/tool calls', () => {
-      const conv: Conversation = {
-        id: 'conv-1',
-        userId: 'user-1',
-        title: '',
-        messages: [
-          {
-            id: 'm1',
-            role: 'assistant',
-            content: '',
-            timestamp: new Date(),
-            deepResearchJobId: 'job-1',
-            deepResearchAgents: [
-              {
-                id: 'a1',
-                name: 'researcher',
-                status: 'complete',
-                startedAt: new Date(),
-              },
-            ],
-            deepResearchToolCalls: [
-              {
-                id: 't1',
-                name: 'web_search_tool',
-                status: 'complete',
-                timestamp: new Date(),
-              },
-            ],
-            citations: [{ id: 'c1', url: 'https://example.com', content: 'x', timestamp: new Date() }],
-          },
-        ],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-      useChatStore.setState({ currentConversation: conv, conversations: [conv] })
-
-      const ok = useChatStore.getState().hydrateDeepResearchFromMessage('job-1')
-
-      expect(ok).toBe(true)
-      const state = useChatStore.getState()
-      expect(state.deepResearchJobId).toBe('job-1')
-      expect(state.deepResearchAgents).toHaveLength(1)
-      expect(state.deepResearchToolCalls).toHaveLength(1)
-      expect(state.deepResearchCitations).toHaveLength(1)
-      expect(state.deepResearchStreamLoaded).toBe(true)
-    })
-
-    test('returns false when no message carries saved state for the job', () => {
-      const conv: Conversation = {
-        id: 'conv-1',
-        userId: 'user-1',
-        title: '',
-        messages: [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-      useChatStore.setState({ currentConversation: conv, conversations: [conv] })
-
-      expect(useChatStore.getState().hydrateDeepResearchFromMessage('missing')).toBe(false)
-    })
-  })
 })

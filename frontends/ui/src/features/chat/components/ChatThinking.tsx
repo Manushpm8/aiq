@@ -654,6 +654,17 @@ export const ChatThinking: FC<ChatThinkingProps> = ({
     [visibleSteps]
   )
 
+  const lastStepEnd = useMemo(() => {
+    let end = 0
+    for (const step of steps) {
+      const ts = step.completedAt ?? step.timestamp
+      if (!ts) continue
+      const ms = toMs(ts)
+      if (ms > end) end = ms
+    }
+    return end > 0 ? end : null
+  }, [steps])
+
   const usedSources = useMemo(
     () =>
       enabledDataSources.filter(
@@ -673,11 +684,15 @@ export const ChatThinking: FC<ChatThinkingProps> = ({
   const statusLabel = isWaiting ? 'Needs your input' : isInterrupted ? 'Interrupted' : 'Done'
   const stepCount = phases.length
   const stepCountLabel = `${stepCount} step${stepCount === 1 ? '' : 's'}`
-  const responseDuration = responseStartedAt
-    ? formatResponseDuration(
-        (responseCompletedAt ? toMs(responseCompletedAt) : responseNow) - toMs(responseStartedAt)
-      )
-    : null
+  const responseEnd = responseCompletedAt
+    ? toMs(responseCompletedAt)
+    : isThinking || isWaiting
+      ? responseNow
+      : lastStepEnd
+  const responseDuration =
+    responseStartedAt != null && responseEnd != null
+      ? formatResponseDuration(responseEnd - toMs(responseStartedAt))
+      : null
 
   const hasTools = hasDataSources || hasFiles
   const showHeaderTools = !isThinking && !isWaiting && !isInterrupted && hasTools

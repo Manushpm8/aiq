@@ -89,6 +89,22 @@ describe('MermaidBlock', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
+  test('moves focus into the fullscreen dialog on open and restores it to the trigger on close', async () => {
+    renderMock.mockResolvedValueOnce({ svg: '<svg viewBox="0 0 1600 900"></svg>' })
+    render(<MermaidBlock code={'erDiagram\n A { }'} fallback={<div />} />)
+    await screen.findByRole('img', { name: 'Diagram' })
+
+    const trigger = screen.getByLabelText('Expand to fullscreen')
+    trigger.focus()
+    await userEvent.click(trigger)
+
+    const dialog = screen.getByRole('dialog', { name: 'Diagram fullscreen view' })
+    expect(dialog).toHaveFocus()
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.getByLabelText('Expand to fullscreen')).toHaveFocus()
+  })
+
   test('omits zoom controls when the diagram has no viewBox', async () => {
     renderMock.mockResolvedValueOnce({ svg: '<svg data-testid="mmd-svg"></svg>' })
     render(<MermaidBlock code={'erDiagram'} fallback={<div />} />)

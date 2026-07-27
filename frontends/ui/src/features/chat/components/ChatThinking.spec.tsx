@@ -115,6 +115,30 @@ describe('ChatThinking', () => {
     })
   })
 
+  describe('response duration', () => {
+    test('a restored interrupted turn shows the real elapsed from the last step, not a mount-relative value', () => {
+      const started = new Date('2024-01-15T14:30:00')
+      const step = createStep({
+        functionName: 'web_search_tool',
+        timestamp: started,
+        completedAt: new Date('2024-01-15T14:30:05'),
+      })
+
+      render(
+        <ChatThinking
+          steps={[step]}
+          isThinking={false}
+          isInterrupted
+          responseStartedAt={started}
+        />
+      )
+
+      const duration = screen.getByLabelText('Total response time')
+      expect(duration).toHaveTextContent('0:05')
+      expect(duration.textContent).not.toMatch(/\d+:\d\d:\d\d/)
+    })
+  })
+
   describe('dedupeNestedToolSteps', () => {
     test('keeps a distinct nested call to the same tool as a top-level call', () => {
       const out = dedupeNestedToolSteps([

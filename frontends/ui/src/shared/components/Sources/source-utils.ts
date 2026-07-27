@@ -49,6 +49,7 @@ export function mapCitationSource(
   const label = sourceLabel(cs.url, kind)
   return {
     id: cs.id || `src-${index}`,
+    index: index + 1,
     title: firstLine || label || cs.url || `Source ${index + 1}`,
     url: kind === 'web' ? cs.url : undefined,
     snippet: cs.content || undefined,

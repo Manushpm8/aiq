@@ -11,14 +11,13 @@ import type { SourceRef } from './types'
 
 interface SourceCardProps {
   source: SourceRef
-  index: number
 }
 
 /**
  * One source rendered as a typed card: title, an origin icon + label, and the
  * citation index. Becomes a link when the source has a real URL.
  */
-export function SourceCard({ source, index }: SourceCardProps): ReactNode {
+export function SourceCard({ source }: SourceCardProps): ReactNode {
   const body = (
     <Card
       tone={source.kind}
@@ -30,7 +29,7 @@ export function SourceCard({ source, index }: SourceCardProps): ReactNode {
           <SourceKindIcon kind={source.kind} />
           <span className="truncate">{source.label}</span>
         </span>
-        <span aria-hidden="true">[{index + 1}]</span>
+        <span aria-hidden="true">[{source.index}]</span>
       </div>
     </Card>
   )
@@ -69,8 +68,8 @@ export function SourceStrip({ sources, previewCount = 4, className }: SourceStri
         <SourceKindIcon kind="doc" /> Sources
       </h3>
       <div className="flex flex-col gap-2">
-        {visible.map((s, i) => (
-          <SourceCard key={s.id} source={s} index={i} />
+        {visible.map((s) => (
+          <SourceCard key={s.id} source={s} />
         ))}
         {hasMore && (
           <button

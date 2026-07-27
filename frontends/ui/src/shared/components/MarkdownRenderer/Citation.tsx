@@ -3,7 +3,7 @@
 
 'use client'
 
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, useId, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { SourceKindIcon } from '@/shared/components/Sources/SourceKindIcon'
 import type { SourceRef } from '@/shared/components/Sources/types'
@@ -18,17 +18,18 @@ const MARK =
 
 /**
  * Inline numbered citation, rendered as a true superscript reference mark.
- * Resolves to a source via its 1-based index and, when found, reveals a
+ * Resolves to a source by its real `[N]` marker index and, when found, reveals a
  * hover/focus popover with the source kind, title, and snippet. A citation
  * number with no matching source degrades to a bare mark; a non-numeric value
  * renders the original bracketed text unchanged.
  */
 export function Citation({ n, sources }: CitationProps): ReactNode {
   const [open, setOpen] = useState(false)
+  const tooltipId = useId()
 
   if (!Number.isFinite(n) || n < 1) return <>[{Number.isFinite(n) ? n : ''}]</>
 
-  const src = sources[n - 1]
+  const src = sources.find((s) => s.index === n)
   const chip = (
     <a
       href={src?.url}
@@ -41,6 +42,7 @@ export function Citation({ n, sources }: CitationProps): ReactNode {
       onFocus={() => setOpen(true)}
       onBlur={() => setOpen(false)}
       aria-label={src ? `Source ${n}: ${src.label}` : `Source ${n}`}
+      aria-describedby={src && open ? tooltipId : undefined}
     >
       <sup>{n}</sup>
     </a>
@@ -54,6 +56,7 @@ export function Citation({ n, sources }: CitationProps): ReactNode {
       <AnimatePresence>
         {open && (
           <motion.span
+            id={tooltipId}
             role="tooltip"
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}

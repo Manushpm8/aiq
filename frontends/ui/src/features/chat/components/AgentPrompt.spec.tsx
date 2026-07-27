@@ -16,7 +16,7 @@ vi.mock('@/shared/components/MarkdownRenderer', () => ({
 describe('AgentPrompt', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    useChatStore.setState({ respondToInteractionFn: null })
+    useChatStore.setState({ respondToInteractionFn: null, pendingInteraction: null })
   })
 
   test('renders prompt content', () => {
@@ -218,6 +218,38 @@ describe('AgentPrompt', () => {
     expect(approveButton).toHaveFocus()
     await user.tab()
     expect(rejectButton).toHaveFocus()
+  })
+
+  test('only the prompt matching the current pending interaction renders live actions', () => {
+    useChatStore.setState({
+      respondToInteractionFn: vi.fn(),
+      pendingInteraction: {
+        id: 'int-new',
+        parentId: 'parent-1',
+        inputType: 'approval',
+        text: 'Approve the plan?',
+      },
+    })
+
+    render(
+      <>
+        <AgentPrompt
+          id="msg-old"
+          interactionId="int-old"
+          type="approval"
+          content="Reply **approve** to proceed, **reject** to cancel"
+        />
+        <AgentPrompt
+          id="msg-new"
+          interactionId="int-new"
+          type="approval"
+          content="Reply **approve** to proceed, **reject** to cancel"
+        />
+      </>
+    )
+
+    expect(screen.getAllByRole('button', { name: /approve plan/i })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /reject plan/i })).toHaveLength(1)
   })
 
   test('treats type="approval" as an approval prompt even without the approve/reject sentence', () => {

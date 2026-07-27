@@ -31,6 +31,13 @@ describe('Card', () => {
     expect(el.className).toContain('border-l-[color:var(--text-color-base)]')
   })
 
+  test('the error tone uses the KUI feedback-danger token', () => {
+    const { container } = render(<Card tone="error">x</Card>)
+    const el = container.firstChild as HTMLElement
+    expect(el.className).toContain('border-[color:var(--border-color-feedback-danger)]')
+    expect(el.className).not.toContain('text-color-error')
+  })
+
   test('merges a caller className and forwards arbitrary props', () => {
     render(
       <Card className="p-2" data-testid="card" role="group">

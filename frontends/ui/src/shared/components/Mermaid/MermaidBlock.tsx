@@ -46,6 +46,8 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ code, fallback }) => {
   const [base, setBase] = useState<{ w: number; h: number } | null>(null)
   const [scale, setScale] = useState(1)
   const [fullscreen, setFullscreen] = useState(false)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLElement | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
   const anchorRef = useRef<{ ratio: number; contentX: number; contentY: number; cx: number; cy: number } | null>(null)
@@ -120,6 +122,19 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ code, fallback }) => {
     return () => window.removeEventListener('keydown', onKey)
   }, [fullscreen])
 
+  useEffect(() => {
+    if (fullscreen) {
+      triggerRef.current = document.activeElement as HTMLElement | null
+      dialogRef.current?.focus()
+      return
+    }
+    const trigger = triggerRef.current
+    if (trigger) {
+      trigger.focus()
+      triggerRef.current = null
+    }
+  }, [fullscreen])
+
   useLayoutEffect(() => {
     const a = anchorRef.current
     const el = scrollRef.current
@@ -182,9 +197,11 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ code, fallback }) => {
 
   return (
     <div
+      ref={dialogRef}
       role={fullscreen ? 'dialog' : undefined}
       aria-modal={fullscreen ? true : undefined}
       aria-label={fullscreen ? 'Diagram fullscreen view' : undefined}
+      tabIndex={fullscreen ? -1 : undefined}
       className={
         fullscreen
           ? 'bg-surface-raised fixed inset-0 z-[60] m-0 overflow-hidden border-0'

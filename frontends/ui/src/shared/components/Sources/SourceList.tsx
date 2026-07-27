@@ -26,13 +26,13 @@ export function SourceList({ sources, className, title = 'Sources' }: SourceList
     <section className={cn('mt-3 space-y-1', className)} aria-label={title}>
       <h3 className="text-subtle text-xs font-medium">{title}</h3>
       <ul className="text-secondary space-y-0.5 text-xs">
-        {sources.map((s, i) => {
+        {sources.map((s) => {
           const domain = s.url ? prettyDomain(s.url) : ''
           const showDomain = Boolean(domain) && domain !== s.label
           return (
             <li key={s.id} className="flex items-start gap-1.5 leading-snug">
               <sup className="text-subtle mt-0.5 align-super text-[0.6rem] leading-none">
-                {i + 1}
+                {s.index}
               </sup>
               <span className="text-subtle mt-px shrink-0">
                 <SourceKindIcon kind={s.kind} className="h-3 w-3" />

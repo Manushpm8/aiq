@@ -42,6 +42,7 @@ function parseReferenceLine(n: number, rest: string): SourceRef {
     const kind = inferSourceKind(url)
     return {
       id: `ref-${n}`,
+      index: n,
       title: title || prettyDomain(url) || url,
       url,
       kind,
@@ -54,6 +55,7 @@ function parseReferenceLine(n: number, rest: string): SourceRef {
   const isFile = FILE_PAGE_RE.test(ref) || kind === 'doc'
   return {
     id: `ref-${n}`,
+    index: n,
     title: ref || `Source ${n}`,
     kind: isFile ? 'doc' : kind,
     label: isFile ? ref || sourceLabel(ref, 'doc') : sourceLabel(ref, kind),
@@ -264,32 +266,4 @@ export function tabularizeEntityLines(body: string): string {
   }
 
   return out.join('\n')
-}
-
-const MERMAID_FENCE_RE = /```mermaid\s*([\s\S]*?)```/i
-const ER_ENTITY_RE = /^[ \t]*([A-Za-z_][\w-]*)\s*\{/gm
-const ER_RELATION_RE = /^[ \t]*([A-Za-z_][\w-]*)\s+[|}{o.\-]+\s+([A-Za-z_][\w-]*)\s*:/gm
-
-/**
- * Pulls the table (entity) names out of a fenced mermaid `erDiagram`, from both
- * the `TABLE { ... }` definition blocks and the `A ||--o{ B :` relationship
- * lines. A schema answer is otherwise just a diagram with no `**References:**`
- * block, so {@link splitReferences} finds nothing; these names let the answer
- * still surface what it covers. Returns a sorted, de-duped list (empty when the
- * content has no ER diagram).
- */
-export function extractSchemaTables(content: string): string[] {
-  const fence = content.match(MERMAID_FENCE_RE)
-  if (!fence) return []
-  const codeBlock = fence[1]
-  if (!/\berDiagram\b/i.test(codeBlock)) return []
-
-  const names = new Set<string>()
-  for (const m of codeBlock.matchAll(ER_ENTITY_RE)) names.add(m[1])
-  for (const m of codeBlock.matchAll(ER_RELATION_RE)) {
-    names.add(m[1])
-    names.add(m[2])
-  }
-  names.delete('erDiagram')
-  return [...names].sort((a, b) => a.localeCompare(b))
 }

@@ -353,6 +353,7 @@ Visit [our site](https://example.com) for more.
 const answerSources: SourceRef[] = [
   {
     id: 's1',
+    index: 1,
     title: 'NVIDIA shipped record volume.',
     kind: 'web',
     label: 'nvidia.com',
@@ -423,7 +424,7 @@ describe('MarkdownRenderer chart fences fall through to code', () => {
     const { container } = render(
       <MarkdownRenderer content={'```chart\n' + spec + '\n```'} variant="answer" />
     )
-    expect(container.querySelector('.research-chart')).toBeFalsy()
+    expect(container.querySelector('.result-chart')).toBeFalsy()
     expect(container.textContent).toContain('"type": "bar"')
   })
 })

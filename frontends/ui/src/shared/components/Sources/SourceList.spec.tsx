@@ -8,6 +8,7 @@ import type { SourceRef } from './types'
 
 const webSource: SourceRef = {
   id: 'w1',
+  index: 1,
   title: 'NVIDIA shipped record volume.',
   kind: 'web',
   label: 'nvidia.com',
@@ -16,6 +17,7 @@ const webSource: SourceRef = {
 
 const docSource: SourceRef = {
   id: 'd1',
+  index: 2,
   title: 'Internal fleet report',
   kind: 'doc',
   label: 'fleet-report.pdf',
@@ -45,5 +47,19 @@ describe('SourceList', () => {
     render(<SourceList sources={[docSource]} />)
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
     expect(screen.getByText('fleet-report.pdf')).toBeInTheDocument()
+  })
+
+  test('labels each source by its real [N] marker, not its array position', () => {
+    render(
+      <SourceList
+        sources={[
+          { ...webSource, index: 2 },
+          { ...docSource, index: 5 },
+        ]}
+      />
+    )
+    expect(screen.getByText('2')).toBeInTheDocument()
+    expect(screen.getByText('5')).toBeInTheDocument()
+    expect(screen.queryByText('1')).not.toBeInTheDocument()
   })
 })

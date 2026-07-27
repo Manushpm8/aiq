@@ -39,4 +39,20 @@ describe('rehypeCitations', () => {
     expect(p.children).toHaveLength(1)
     expect(p.children[0].value).toBe('No citations here.')
   })
+
+  test('does not treat a subscript-style prose bracket (results[1]) as a citation', () => {
+    const tree = runPlugin(paragraph('Read results[1] from the array.'))
+    const p = tree.children[0] as { children: Array<{ tagName?: string; value?: string }> }
+    expect(p.children.filter((c) => c.tagName === 'cite')).toHaveLength(0)
+    expect(p.children).toHaveLength(1)
+    expect(p.children[0].value).toBe('Read results[1] from the array.')
+  })
+
+  test('still parses a real [n] citation when the preceding bracket is prose', () => {
+    const tree = runPlugin(paragraph('Read results[1] and note the total [2].'))
+    const p = tree.children[0] as { children: Array<{ tagName?: string; children?: Array<{ value: string }> }> }
+    const cites = p.children.filter((c) => c.tagName === 'cite')
+    expect(cites).toHaveLength(1)
+    expect(cites[0].children?.[0].value).toBe('2')
+  })
 })

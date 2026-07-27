@@ -24,6 +24,8 @@ export function rehypeCitations() {
       let match: RegExpExecArray | null
       CITATION_RE.lastIndex = 0
       while ((match = CITATION_RE.exec(node.value)) !== null) {
+        const prevChar = match.index > 0 ? node.value[match.index - 1] : ''
+        if (/\w/.test(prevChar)) continue
         if (match.index > lastIndex) {
           replacements.push({ type: 'text', value: node.value.slice(lastIndex, match.index) })
         }

@@ -406,6 +406,7 @@ const MessageRenderer: FC<MessageRendererProps> = ({
       return (
         <AgentPrompt
           id={message.id}
+          interactionId={message.promptId}
           type={message.promptType}
           content={message.content}
           options={message.promptOptions}

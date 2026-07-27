@@ -15,7 +15,7 @@ const TONE_CLASS: Record<CardTone, string> = {
   default: 'border-base',
   active: 'border-[color:var(--color-brand)]',
   success: 'border-[color:var(--color-green-500)]',
-  error: 'border-[color:var(--text-color-error,#d9534f)]',
+  error: 'border-[color:var(--border-color-feedback-danger)]',
   web: 'border-base border-l-2 border-l-[color:var(--text-color-subtle)]',
   doc: 'border-base border-l-2 border-l-[color:var(--text-color-base)]',
 }

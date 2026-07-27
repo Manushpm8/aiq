@@ -9,6 +9,7 @@ import type { SourceRef } from './types'
 function makeSources(n: number): SourceRef[] {
   return Array.from({ length: n }, (_, i) => ({
     id: `s${i}`,
+    index: i + 1,
     title: `Source ${i}`,
     kind: 'web' as const,
     label: `site${i}.com`,
@@ -54,5 +55,16 @@ describe('SourceStrip', () => {
   test('links cards that have a url', () => {
     render(<SourceStrip sources={makeSources(1)} />)
     expect(screen.getByRole('link')).toHaveAttribute('href', 'https://site0.com')
+  })
+
+  test('labels each card by its real [N] marker, not its array position', () => {
+    const sparse: SourceRef[] = [
+      { id: 'a', index: 2, title: 'Second', kind: 'web', label: 'two.com', url: 'https://two.com' },
+      { id: 'b', index: 5, title: 'Fifth', kind: 'web', label: 'five.com', url: 'https://five.com' },
+    ]
+    render(<SourceStrip sources={sparse} />)
+    expect(screen.getByText('[2]')).toBeInTheDocument()
+    expect(screen.getByText('[5]')).toBeInTheDocument()
+    expect(screen.queryByText('[1]')).not.toBeInTheDocument()
   })
 })

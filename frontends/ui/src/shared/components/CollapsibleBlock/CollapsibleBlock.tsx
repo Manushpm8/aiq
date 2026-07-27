@@ -68,7 +68,7 @@ export const CollapsibleBlock: FC<CollapsibleBlockProps> = ({
           type="button"
           onClick={() => onOpenChange?.(!open)}
           aria-expanded={open}
-          aria-controls={regionId}
+          aria-controls={open ? regionId : undefined}
           className="group flex w-full items-center justify-between rounded-[var(--radius-card)] py-1.5 text-left transition-colors"
         >
           {header}
