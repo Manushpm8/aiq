@@ -154,10 +154,10 @@ _WRITER_RENDER_CONTEXT = {
 }
 
 
-def _render_writer(*, skills_enabled: bool, execution_enabled: bool) -> str:
+def _render_writer(*, chart_skill_enabled: bool, execution_enabled: bool) -> str:
     return render_prompt_template(
         _WRITER.read_text(),
-        skills_enabled=skills_enabled,
+        chart_skill_enabled=chart_skill_enabled,
         execution_enabled=execution_enabled,
         **_WRITER_RENDER_CONTEXT,
     )
@@ -170,16 +170,17 @@ def test_writer_prompt_no_longer_embeds_the_inline_chart_contract() -> None:
 
 
 @pytest.mark.parametrize("execution_enabled", [True, False])
-def test_writer_delegates_charts_to_the_skill_when_skills_enabled(execution_enabled: bool) -> None:
-    rendered = _render_writer(skills_enabled=True, execution_enabled=execution_enabled)
+def test_writer_delegates_charts_to_the_skill_when_chart_skill_enabled(execution_enabled: bool) -> None:
+    rendered = _render_writer(chart_skill_enabled=True, execution_enabled=execution_enabled)
     assert "## Figures and Charts" in rendered
     assert "chart-generation" in rendered
     # The contract is delivered on demand by the skill, never inlined here.
     assert "```chart" not in rendered
 
 
-def test_writer_degrades_to_a_table_without_skills() -> None:
-    rendered = _render_writer(skills_enabled=False, execution_enabled=False)
+def test_writer_degrades_to_a_table_without_the_chart_skill() -> None:
+    rendered = _render_writer(chart_skill_enabled=False, execution_enabled=False)
     assert "## Figures and Charts" in rendered
     assert "chart-generation" not in rendered
+    assert "compact Markdown table" in rendered
     assert "```chart" not in rendered

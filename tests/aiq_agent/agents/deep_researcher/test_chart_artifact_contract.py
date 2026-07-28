@@ -21,12 +21,12 @@ def test_chart_skill_uses_runtime_argument_instead_of_executable_placeholder() -
     assert 'ARTIFACT_DIR / "manifest.json"' in skill
 
 
-def test_writer_runs_chart_script_with_rendered_per_job_paths() -> None:
+def test_writer_provides_rendered_per_job_paths_as_chart_skill_context() -> None:
     prompt = (_AGENT_ROOT / "prompts" / "writer.j2").read_text(encoding="utf-8")
     rendered = render_prompt_template(
         prompt,
         current_datetime="2026-07-09",
-        skills_enabled=True,
+        chart_skill_enabled=True,
         execution_enabled=True,
         parent_report_context_available=False,
         sandbox_workdir="/sandbox/job-123",
@@ -34,5 +34,7 @@ def test_writer_runs_chart_script_with_rendered_per_job_paths() -> None:
         user_info=None,
     )
 
-    assert "python3 /sandbox/job-123/make_chart.py /sandbox/job-123/aiq-artifacts" in rendered
-    assert "Never put a literal `<sandbox_workdir>` or `<sandbox_artifact_dir>`" in rendered
+    assert "/sandbox/job-123" in rendered
+    assert "/sandbox/job-123/aiq-artifacts" in rendered
+    assert "<sandbox_workdir>" not in rendered
+    assert "<sandbox_artifact_dir>" not in rendered

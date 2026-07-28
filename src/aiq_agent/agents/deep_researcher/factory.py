@@ -485,7 +485,10 @@ def build_deep_research_subagents(context: DeepResearchGraphContext) -> list[dic
                 TodoSuppressionMiddleware(),
                 RequiredOutputFileMiddleware(tracker=context.final_report_tracker),
             ],
-            prompt_values={"parent_report_context_available": context.parent_report_context_available},
+            prompt_values={
+                "parent_report_context_available": context.parent_report_context_available,
+                "chart_skill_enabled": context.runtime.agent_has_chart_skill(WRITER_AGENT),
+            },
             skills=context.skill_sources(WRITER_AGENT),
         ),
     )

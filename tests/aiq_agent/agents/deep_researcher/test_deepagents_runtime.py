@@ -70,7 +70,8 @@ def test_openshell_workflow_only_diverges_for_sandbox_wiring() -> None:
         "_type": "deep_research_skills",
         "agents": {"writer-agent": ["visualization"]},
     }
-    openshell_functions.pop("deep_research_skills")
+    openshell_skills = openshell_functions.pop("deep_research_skills")
+    assert "visualization" in openshell_skills["agents"]["writer-agent"]
     openshell_functions.pop("deep_research_sandbox")
     for functions in (standard_functions, openshell_functions):
         functions["deep_research_agent"] = functions["deep_research_agent"].copy()
@@ -157,6 +158,17 @@ class TestDeepAgentsRuntimeRouting:
         assert set(backend.routes) == {BUILTIN_SKILL_SOURCE}
         assert isinstance(backend.routes[BUILTIN_SKILL_SOURCE], FilesystemBackend)
         assert runtime.skill_sources_for("writer-agent") == [SYNTHESIS_SKILL_SOURCE]
+
+    def test_agent_has_chart_skill_tracks_visualization_collection(self) -> None:
+        runtime = DeepAgentsRuntime(
+            skills=DeepResearchSkillsConfig(
+                agents={"writer-agent": ("visualization",), "researcher-agent": ("synthesis",)},
+            ),
+        )
+
+        assert runtime.agent_has_chart_skill("writer-agent") is True
+        assert runtime.agent_has_chart_skill("researcher-agent") is False
+        assert runtime.agent_has_chart_skill("planner-agent") is False
 
     def test_sandbox_only_adds_shared_route(self) -> None:
         fake_sandbox = MagicMock()

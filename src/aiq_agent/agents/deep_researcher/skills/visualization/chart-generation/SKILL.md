@@ -27,6 +27,11 @@ follow the matching section below.
    `chart` JSON spec that the web app renders, plus a portable Markdown table. Follow
    **Inline Mode (chart spec)** below. Do NOT attempt to run code or produce a PNG.
 
+The two modes are mutually exclusive and are selected only by tool availability: pick exactly
+one and emit only that output path. When an `execute` tool (sandbox) is available you must use
+Sandbox mode and must not emit an inline `chart` spec; only when no `execute` tool exists do you
+use Inline mode. Never produce both a PNG artifact and an inline spec for the same figure.
+
 Both modes share the same discipline: a chart confers authority, so it must be earned.
 
 ## Data sufficiency (earn the chart, both modes)
@@ -223,11 +228,13 @@ compact | percent | currency" }`; `series` = `[ { "key": "<numeric field>", "lab
 | warn | alarm" } ]`. A `delta` chart encodes exactly one series.
 
 Example (ranking):
+
 ```chart
 {"type":"hbar","title":"Top suppliers by late shipments","x":{"key":"supplier"},"y":{"format":"number"},"series":[{"key":"late","color":"amber"}],"data":[{"supplier":"Acme","late":42},{"supplier":"Globex","late":31},{"supplier":"Initech","late":19}]}
 ```
 
 Example (single value, KPI-only):
+
 ```chart
 {"title":"On-time delivery rate","kpis":[{"label":"On-time","value":"92.4%","tone":"accent"}]}
 ```
@@ -237,6 +244,7 @@ line of JSON with at least two line-chart specs: `{ "title": "...", "charts": [ 
 spec>, ... ] }`.
 
 Example (related trends, carousel):
+
 ```chart-carousel
 {"title":"Quarterly delivery trends","charts":[{"type":"line","title":"On-time delivery rate","x":{"key":"quarter"},"y":{"format":"percent"},"series":[{"key":"rate","color":"green"}],"data":[{"quarter":"Q1","rate":0.88},{"quarter":"Q2","rate":0.90},{"quarter":"Q3","rate":0.93}]},{"type":"line","title":"Late shipments","x":{"key":"quarter"},"y":{"format":"number"},"series":[{"key":"late","color":"amber"}],"data":[{"quarter":"Q1","late":52},{"quarter":"Q2","late":41},{"quarter":"Q3","late":28}]}]}
 ```

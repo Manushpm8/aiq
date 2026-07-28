@@ -496,6 +496,15 @@ ordered `preferred_tools` and `fallback_tools` guidance on each `ResearchQuery`;
 request-filtered callable set. Refer to [Tools and Sources](./tools-and-sources.md#automatic-source-routing) and the
 [`config_domain_routing_and_skills.yml`](../../../configs/config_domain_routing_and_skills.yml) reference profile.
 
+```{note}
+**Migration: `chart-generation` moved to the `visualization` collection.** The built-in
+`chart-generation` skill previously lived in the `research` collection; it now lives in its own
+`visualization` collection, and charts are no longer sandbox-gated. A `writer-agent` that
+previously listed only `research` to obtain charts must now also list `visualization` in its
+`deep_research_skills` assignment. The shipped configs already include `visualization` for the
+writer; update any external config that relied on `research` for charts.
+```
+
 ---
 
 ## `workflow` Section
