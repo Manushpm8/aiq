@@ -124,6 +124,26 @@ of one reusable, structured-output runnable behind the orchestrator-only
 `run_research_batch` tool. They do not appear as `task()` subagents and do
 not manage top-level workflow todos.
 
+## Shared State, Skills, and Execution Boundary
+
+The shared-state and skills boxes in the architecture diagram represent
+runtime dependencies, not additional agents:
+
+| Boundary | Current implementation |
+| -------- | ---------------------- |
+| Shared research state | The host-side `StateBackend` mounted at `/shared/` stores the source-routing plan, research plan, structured notes, and `/shared/output.md`. DeepAgents graph state separately carries progress todos and file metadata. |
+| Skill definitions | Built-in skill collections are mounted from the host at `/skills/`. Filesystem permissions expose only the collections assigned to a role and deny writes to the skill tree. |
+| Sandbox workdir | When a sandbox is configured, the default filesystem route and `execute` tool use one provider sandbox per deep-research job. Agents within that job share the provider runtime; separate jobs receive separate sandboxes. |
+| Inference and source tools | LLM calls, source-tool calls, credentials, orchestration state, and `/shared/` remain in the AI-Q process. Only generated code and job-workspace files cross the sandbox boundary. |
+
+The shipped `config_domain_routing_and_skills.yml` profile assigns the
+`research` collection to researcher workers and the `synthesis` collection to
+the writer. The research collection currently includes chart generation,
+table analysis, forecast analysis, and lightweight calculations. The synthesis
+collection includes long-form and prediction report writers. A skill provides
+instructions; only skills that invoke `execute` require the optional sandbox.
+Modal and OpenShell implement the same provider-neutral job-scoped contract.
+
 ## Data Source Boundary
 
 `DeepResearchAgentState.data_sources` is a hard per-request boundary for
@@ -229,7 +249,7 @@ functions:
 ```
 
 ```{note}
-**Nemotron Super — Build Endpoint Availability:** Nemotron Super (`nvidia/nemotron-3-super-120b-a12b`) is compatible and tested with AIQ, but Build API endpoints have limited availability due to high demand (HTTP 429/503 responses). The default configs use Nemotron Super for the `researcher_llm` role. For production deployments requiring consistent throughput, self-hosting via a [Brev Launchable](https://brev.nvidia.com/launchable/deploy?launchableID=nvidia-official-nemotron-super-49b-v1) is recommended. Refer to [Troubleshooting](../../resources/troubleshooting.md#nemotron-super--build-endpoint-availability) for details.
+**Hosted Endpoint Availability:** Nemotron Super (`nvidia/nemotron-3-super-120b-a12b`) and Nemotron Ultra (`nvidia/nemotron-3-ultra-550b-a55b`) are compatible and tested with AIQ, but their hosted endpoints can have limited availability during high demand (HTTP 429/503 responses). The default configs use Nemotron Super for the `writer_llm` role and Nemotron Ultra for the other deep-research roles. For production deployments requiring consistent throughput, refer to the model-specific [self-hosting guidance](../../resources/troubleshooting.md#nemotron-super-and-ultra--hosted-endpoint-availability).
 ```
 
 ## Prompt Templates

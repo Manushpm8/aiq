@@ -25,8 +25,8 @@ When using [NVIDIA API Catalog](https://build.nvidia.com/) (the default), infere
 
 | Component | Default Model | Self-Hosted Hardware Reference |
 |-----------|---------------|-------------------------------|
-| LLM (intent classifier, orchestrator, planner) | `nvidia/nemotron-3-super-120b-a12b` | [Nemotron 3 Super model card](https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/modelcard) |
-| LLM (deep research researcher) | `nvidia/nemotron-3-super-120b-a12b` | [Nemotron 3 Super model card](https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/modelcard) |
+| LLM (intent classifier, shallow researcher, deep-research writer) | `nvidia/nemotron-3-super-120b-a12b` | [Nemotron 3 Super model card](https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b/modelcard) |
+| LLM (deep-research source router, orchestrator, planner, researcher) | `nvidia/nemotron-3-ultra-550b-a55b` | [Nemotron 3 Ultra model card](https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b/modelcard) |
 | LLM (deep research orchestrator/planner, optional) | `openai/gpt-oss-120b` | [GPT OSS model card](https://build.nvidia.com/openai/gpt-oss-120b/modelcard) |
 | Document summary (optional) | `nvidia/nemotron-mini-4b-instruct` | [Nemotron Mini 4B](https://build.nvidia.com/nvidia/nemotron-mini-4b-instruct/) |
 | Text embedding | `nvidia/llama-nemotron-embed-vl-1b-v2` | [NeMo Retriever embedding support matrix](https://docs.nvidia.com/nim/nemo-retriever/text-embedding/latest/support-matrix.html) |
@@ -51,7 +51,7 @@ The script performs the following steps:
 3. Installs the core package with dev dependencies
 4. Installs all frontends (CLI, debug console, API server)
 5. Installs benchmark packages (freshqa, deepsearch_qa)
-6. Installs the data source plugins (Tavily, Exa, Nimble, Google Scholar) and the LlamaIndex and Foundational RAG knowledge extras
+6. Installs the data source plugins (Tavily, Exa, Nimble, You.com, Google Scholar) and the LlamaIndex and Foundational RAG knowledge extras
 7. Sets up pre-commit hooks
 8. Copies `deploy/.env.example` to `deploy/.env` if no `.env` file exists
 9. Installs UI npm dependencies (if Node.js is available)
@@ -97,6 +97,7 @@ uv pip install -e ./frontends/aiq_api      # Unified API server (includes debug)
 uv pip install -e ./sources/tavily_web_search
 uv pip install -e ./sources/exa_web_search
 uv pip install -e ./sources/nimble_web_search
+uv pip install -e ./sources/you_com
 uv pip install -e ./sources/duckduckgo_news_search
 uv pip install -e ./sources/polymarket_prediction_market
 uv pip install -e ./sources/google_scholar_paper_search
