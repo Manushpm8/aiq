@@ -45,14 +45,16 @@ from aiq_agent.agents.deep_researcher.deepagents_runtime import resolve_skill_co
 SYNTHESIS_SKILL_SOURCE = f"{BUILTIN_SKILL_SOURCE}synthesis/"
 
 
-def test_openshell_workflow_only_diverges_for_sandbox_wiring() -> None:
+def test_openshell_workflow_only_diverges_for_skills_and_sandbox_wiring() -> None:
     """Keep the OpenShell workflow aligned with the standard web config.
 
-    Both configs now wire the on-demand visualization skill, so the skill
-    wiring is dropped from each before the structural comparison. OpenShell's
-    skills block additionally carries the sandbox-gated research and synthesis
-    collections, leaving the sandbox function and its agent ref as the only
-    remaining divergence.
+    The visualization chart skill now ships only in the skills and sandbox
+    example configs, so the standard web config wires no deep_research_skills
+    at all and renders chart-worthy data as Markdown tables. OpenShell layers
+    the sandbox-gated research and synthesis collections plus the on-demand
+    visualization skill on top of a sandbox, so the skills function, the
+    sandbox function, and their two agent refs are the only divergence from
+    the standard config.
     """
 
     def load(path: str) -> dict[str, Any]:
@@ -66,17 +68,21 @@ def test_openshell_workflow_only_diverges_for_sandbox_wiring() -> None:
     standard_functions = standard["functions"].copy()
     openshell_functions = openshell["functions"].copy()
 
-    assert standard_functions.pop("deep_research_skills") == {
-        "_type": "deep_research_skills",
-        "agents": {"writer-agent": ["visualization"]},
-    }
+    assert "deep_research_skills" not in standard_functions
+    assert "deep_research_sandbox" not in standard_functions
+    assert "skills" not in standard_functions["deep_research_agent"]
+    assert "sandbox" not in standard_functions["deep_research_agent"]
+
     openshell_skills = openshell_functions.pop("deep_research_skills")
+    assert openshell_skills["_type"] == "deep_research_skills"
+    assert openshell_skills["agents"]["researcher-agent"] == ["research"]
     assert "visualization" in openshell_skills["agents"]["writer-agent"]
+    assert "research" in openshell_skills["require_sandbox"]
     openshell_functions.pop("deep_research_sandbox")
-    for functions in (standard_functions, openshell_functions):
-        functions["deep_research_agent"] = functions["deep_research_agent"].copy()
-        functions["deep_research_agent"].pop("skills")
-    openshell_functions["deep_research_agent"].pop("sandbox")
+
+    openshell_agent = openshell_functions["deep_research_agent"] = openshell_functions["deep_research_agent"].copy()
+    assert openshell_agent.pop("skills") == "deep_research_skills"
+    assert openshell_agent.pop("sandbox") == "deep_research_sandbox"
 
     assert openshell["general"] == standard["general"]
     assert openshell["llms"] == standard["llms"]

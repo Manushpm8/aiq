@@ -67,7 +67,6 @@ def test_public_mcp_config_preserves_reference_orchestration_choices() -> None:
         "clarifier_agent",
         "data_sources",
         "deep_research_agent",
-        "deep_research_skills",
         "intent_classifier",
         "shallow_research_agent",
         "web_search_tool",

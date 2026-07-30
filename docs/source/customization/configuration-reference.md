@@ -499,10 +499,11 @@ request-filtered callable set. Refer to [Tools and Sources](./tools-and-sources.
 ```{note}
 **Migration: `chart-generation` moved to the `visualization` collection.** The built-in
 `chart-generation` skill previously lived in the `research` collection; it now lives in its own
-`visualization` collection, and charts are no longer sandbox-gated. A `writer-agent` that
-previously listed only `research` to obtain charts must now also list `visualization` in its
-`deep_research_skills` assignment. The shipped configs already include `visualization` for the
-writer; update any external config that relied on `research` for charts.
+`visualization` collection, and charts are no longer sandbox-gated. The `visualization` skill ships
+enabled only in the skills and sandbox example configs (`config_domain_routing_and_skills.yml` and
+`config_openshell.yml`); every other shipped config presents chart-worthy data as a Markdown table.
+A writer that wants inline charts must be assigned the `visualization` collection in its
+`deep_research_skills` assignment.
 ```
 
 ---
