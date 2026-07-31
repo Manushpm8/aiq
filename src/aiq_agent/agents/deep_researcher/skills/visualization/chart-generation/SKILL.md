@@ -72,7 +72,9 @@ report by reference (never by pasting image data).
    `sandbox_artifact_dir` given in your instructions (a per-job path such as
    `/sandbox/<job_id>/aiq-artifacts`). Use that value verbatim - do NOT write to a bare
    `/sandbox/aiq-artifacts`; the runtime only harvests files under `sandbox_artifact_dir`.
-5. **Write a manifest** so the chart is harvested reliably (see below).
+5. **Write a manifest** to carry the chart's title, caption, and inline flag and to checkpoint
+   it mid-run (see below). It is preferred, not strictly required: a chart left in
+   `sandbox_artifact_dir` is still captured by the terminal directory scan without one.
 6. **Reference, do not embed bytes:** in the report, link the chart with
    `![caption](artifact://<filename>.png)`. The runtime resolves this to the durable
    artifact; never paste base64 image data into the report.
@@ -121,10 +123,16 @@ Each figure must appear where it is discussed, not buried in a file list:
 ## Manifest
 
 Write a `manifest.json` in your `sandbox_artifact_dir` so the runtime captures the chart
-with metadata. Manifest `path` values must be absolute and inside your `sandbox_artifact_dir`
-(the per-job path from your instructions). Construct every manifest path from the runtime
-argument as shown below; do not hand-copy an angle-bracket placeholder into JSON. Set
-`inline: true` only for a raster image intended to appear in the report.
+with its metadata. The manifest is the preferred path, not a hard requirement: a successful
+`execute` checkpoints the manifest-declared artifacts immediately, and the manifest carries the
+`title`, `caption`, and `inline` flag that let the chart render inline with a caption. If no
+valid manifest is written, the terminal directory scan still captures any file left in
+`sandbox_artifact_dir` as a successful fallback, but with default metadata (no title or caption,
+and not auto-inlined), so the manifest is how you get an inline, captioned chart. Manifest
+`path` values must be absolute and inside your `sandbox_artifact_dir` (the per-job path from
+your instructions). Construct every manifest path from the runtime argument as shown below; do
+not hand-copy an angle-bracket placeholder into JSON. Set `inline: true` only for a raster image
+intended to appear in the report.
 
 ## Example Script
 
