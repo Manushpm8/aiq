@@ -29,10 +29,12 @@ from aiq_agent.agents.deep_researcher.custom_middleware import FinalReportCommit
 from aiq_agent.agents.deep_researcher.custom_middleware import FinalReportCommitTracker
 from aiq_agent.agents.deep_researcher.custom_middleware import FinalReportOwnershipGuardMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import RequiredOutputFileMiddleware
+from aiq_agent.agents.deep_researcher.custom_middleware import RequiredWriterDelegationMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import SourceRegistryMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import SourceRoutingGuardMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import SourceRoutingPersistenceMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import StateMutationGuardMiddleware
+from aiq_agent.agents.deep_researcher.custom_middleware import StructuredResponseTextFallbackMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import TodoQuotaMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import TodoSuppressionMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import ToolNameSanitizationMiddleware
@@ -264,9 +266,16 @@ def test_subagents_route_tools_and_writer_skills():
     assert any(isinstance(item, ToolVisibilityMiddleware) for item in by_name["writer-agent"]["middleware"])
     assert any(isinstance(item, TodoSuppressionMiddleware) for item in by_name["source-router-agent"]["middleware"])
     assert any(
+        isinstance(item, StructuredResponseTextFallbackMiddleware)
+        for item in by_name["source-router-agent"]["middleware"]
+    )
+    assert any(
         isinstance(item, SourceRoutingPersistenceMiddleware) for item in by_name["source-router-agent"]["middleware"]
     )
     assert any(isinstance(item, TodoSuppressionMiddleware) for item in by_name["planner-agent"]["middleware"])
+    assert any(
+        isinstance(item, StructuredResponseTextFallbackMiddleware) for item in by_name["planner-agent"]["middleware"]
+    )
     assert any(isinstance(item, TodoSuppressionMiddleware) for item in by_name["writer-agent"]["middleware"])
     assert any(isinstance(item, RequiredOutputFileMiddleware) for item in by_name["writer-agent"]["middleware"])
 
@@ -405,6 +414,10 @@ def test_graph_wires_filesystem_tool_call_guard_cross_cutting():
         isinstance(middleware, TodoQuotaMiddleware) for middleware in create_graph.call_args.kwargs["middleware"]
     )
     assert any(
+        isinstance(middleware, RequiredWriterDelegationMiddleware)
+        for middleware in create_graph.call_args.kwargs["middleware"]
+    )
+    assert any(
         isinstance(middleware, FinalReportOwnershipGuardMiddleware)
         for middleware in create_researcher.call_args.kwargs["middleware"]
     )
@@ -516,5 +529,6 @@ def test_researcher_runnable_uses_rendered_prompt_and_runtime_middleware():
     assert "FilesystemMiddleware" in middleware_names
     assert "FakeSummarizationMiddleware" in middleware_names
     assert "PatchToolCallsMiddleware" in middleware_names
+    assert "StructuredResponseTextFallbackMiddleware" in middleware_names
     assert "ToolVisibilityMiddleware" in middleware_names
     assert kwargs["middleware"][-2] is shared_middleware[0]

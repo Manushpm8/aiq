@@ -26,6 +26,7 @@ from deepagents.backends import CompositeBackend
 from deepagents.backends import StateBackend
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from langchain.agents import create_agent
+from langchain.agents.middleware.types import ModelResponse
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.messages import HumanMessage
@@ -40,14 +41,17 @@ from aiq_agent.agents.deep_researcher.custom_middleware import FinalReportCommit
 from aiq_agent.agents.deep_researcher.custom_middleware import FinalReportOwnershipGuardMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import PlanPersistenceMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import RequiredOutputFileMiddleware
+from aiq_agent.agents.deep_researcher.custom_middleware import RequiredWriterDelegationMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import SourceRegistryMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import SourceRoutingGuardMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import SourceRoutingPersistenceMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import StateMutationGuardMiddleware
+from aiq_agent.agents.deep_researcher.custom_middleware import StructuredResponseTextFallbackMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import TodoQuotaMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import TodoSuppressionMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import ToolNameSanitizationMiddleware
 from aiq_agent.agents.deep_researcher.custom_middleware import ToolVisibilityMiddleware
+from aiq_agent.agents.deep_researcher.models import SourceRoutingPlan
 from aiq_agent.agents.deep_researcher.resource_limits import DeepResearchResourceLimits
 from aiq_agent.agents.deep_researcher.resource_limits import StateBudgetLedger
 from aiq_agent.agents.deep_researcher.tools.source_registry import build_get_verified_sources_tool
@@ -61,6 +65,129 @@ class _ToolBindingFakeChatModel(FakeMessagesListChatModel):
 
     def bind_tools(self, tools, *, tool_choice=None, **kwargs):
         return self
+
+
+class TestStructuredResponseTextFallbackMiddleware:
+    """Strictly recover provider responses that contain the requested contract as JSON text."""
+
+    @staticmethod
+    def _routing() -> dict[str, object]:
+        return {
+            "domain_id": "general",
+            "domain_name": "General",
+            "routing_reason": "Best fit",
+            "recommendations": [],
+            "fallback_sources": [],
+            "planner_guidance": "Use web search.",
+        }
+
+    def test_promotes_exact_schema_valid_json_in_agent(self) -> None:
+        payload = self._routing()
+        model = _ToolBindingFakeChatModel(responses=[AIMessage(content=json.dumps(payload))])
+        agent = create_agent(
+            model=model,
+            tools=[],
+            middleware=[StructuredResponseTextFallbackMiddleware(SourceRoutingPlan)],
+            response_format=SourceRoutingPlan,
+        )
+
+        result = agent.invoke({"messages": [HumanMessage(content="Route this request.")]})
+
+        assert result["structured_response"] == SourceRoutingPlan.model_validate(payload)
+
+    def test_corrects_empty_response_in_agent(self) -> None:
+        payload = self._routing()
+        model = _ToolBindingFakeChatModel(responses=[AIMessage(content=""), AIMessage(content=json.dumps(payload))])
+        agent = create_agent(
+            model=model,
+            tools=[],
+            middleware=[StructuredResponseTextFallbackMiddleware(SourceRoutingPlan)],
+            response_format=SourceRoutingPlan,
+        )
+
+        result = agent.invoke({"messages": [HumanMessage(content="Route this request.")]})
+
+        assert result["structured_response"] == SourceRoutingPlan.model_validate(payload)
+
+    @pytest.mark.parametrize(
+        "content",
+        ["", "```json\n{}\n```", "{}\nUse this routing plan.", "[]", "{}"],
+    )
+    def test_retries_non_exact_or_schema_invalid_content_without_tools(self, content: str) -> None:
+        payload = self._routing()
+        responses = [
+            ModelResponse(result=[AIMessage(content=content)]),
+            ModelResponse(result=[AIMessage(content=json.dumps(payload))]),
+        ]
+        request = MagicMock()
+        request.messages = [HumanMessage(content="Route this request.")]
+        corrected_request = object()
+        request.override.return_value = corrected_request
+        handler = MagicMock(side_effect=responses)
+        middleware = StructuredResponseTextFallbackMiddleware(SourceRoutingPlan)
+
+        result = middleware.wrap_model_call(request, handler)
+
+        assert result.structured_response == SourceRoutingPlan.model_validate(payload)
+        assert handler.call_args_list == [((request,),), ((corrected_request,),)]
+        request.override.assert_called_once()
+        overrides = request.override.call_args.kwargs
+        assert overrides["tools"] == []
+        assert overrides["tool_choice"] is None
+        assert overrides["response_format"] is None
+        assert overrides["messages"][:-1] == request.messages
+        correction = overrides["messages"][-1]
+        assert isinstance(correction, HumanMessage)
+        assert "exactly one JSON object" in str(correction.content)
+        assert '"domain_id"' in str(correction.content)
+
+    @pytest.mark.asyncio
+    async def test_async_correction_is_bounded_to_one_retry(self) -> None:
+        responses = [
+            ModelResponse(result=[AIMessage(content="")]),
+            ModelResponse(result=[AIMessage(content="still invalid")]),
+        ]
+        request = MagicMock()
+        request.messages = [HumanMessage(content="Route this request.")]
+        corrected_request = object()
+        request.override.return_value = corrected_request
+        handler = AsyncMock(side_effect=responses)
+        middleware = StructuredResponseTextFallbackMiddleware(SourceRoutingPlan)
+
+        result = await middleware.awrap_model_call(request, handler)
+
+        assert result is responses[1]
+        assert result.structured_response is None
+        assert handler.await_args_list == [((request,),), ((corrected_request,),)]
+
+    @pytest.mark.asyncio
+    async def test_preserves_native_structured_response(self) -> None:
+        structured = SourceRoutingPlan.model_validate(self._routing())
+        response = ModelResponse(result=[AIMessage(content="")], structured_response=structured)
+        middleware = StructuredResponseTextFallbackMiddleware(SourceRoutingPlan)
+        handler = AsyncMock(return_value=response)
+
+        result = await middleware.awrap_model_call(None, handler)
+
+        assert result is response
+        handler.assert_awaited_once_with(None)
+
+    @pytest.mark.asyncio
+    async def test_does_not_intercept_tool_calls(self) -> None:
+        response = ModelResponse(
+            result=[
+                AIMessage(
+                    content=json.dumps(self._routing()),
+                    tool_calls=[{"name": "lookup_source_catalog", "args": {}, "id": "lookup-1"}],
+                )
+            ]
+        )
+        middleware = StructuredResponseTextFallbackMiddleware(SourceRoutingPlan)
+
+        result = await middleware.awrap_model_call(None, AsyncMock(return_value=response))
+
+        assert result is response
+        assert result.structured_response is None
 
 
 class TestSourceRoutingGuardMiddleware:
@@ -696,6 +823,15 @@ class TestRequiredOutputFileMiddleware:
         with pytest.raises(RuntimeError, match="^writer_output_not_committed$"):
             middleware.after_model(still_missing, None)
 
+    def test_matching_user_input_does_not_consume_corrective_retry(self) -> None:
+        middleware = RequiredOutputFileMiddleware(tracker=FinalReportCommitTracker())
+        state = self._state(messages=[HumanMessage(content=middleware._retry_message), AIMessage(content=self.marker)])
+
+        update = middleware.after_model(state, None)
+
+        assert update is not None
+        assert update["jump_to"] == "model"
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize("shared_route", [False, True])
     async def test_graph_overwrites_stale_planner_output_and_commits_writer_report(self, shared_route: bool) -> None:
@@ -764,6 +900,68 @@ class TestRequiredOutputFileMiddleware:
                     "files": {"/shared/output.md": {"content": "# Planner prose"}},
                 }
             )
+
+
+class TestRequiredWriterDelegationMiddleware:
+    """The orchestrator gets one bounded chance to invoke the writer."""
+
+    @staticmethod
+    def _state(*, messages: list[object] | None = None, files: dict[str, object] | None = None) -> dict[str, object]:
+        return {
+            "messages": messages or [AIMessage(content="Research could not continue.")],
+            "files": files or {},
+        }
+
+    def test_terminal_orchestrator_response_requests_writer_delegation(self) -> None:
+        middleware = RequiredWriterDelegationMiddleware(tracker=FinalReportCommitTracker())
+
+        update = middleware.after_model(self._state(), None)
+
+        assert update is not None
+        assert update["jump_to"] == "model"
+        assert "writer-agent" in str(update["messages"][0].content)
+        assert "Do not perform or retry source research" in str(update["messages"][0].content)
+
+    def test_intermediate_tool_call_is_not_interrupted(self) -> None:
+        middleware = RequiredWriterDelegationMiddleware(tracker=FinalReportCommitTracker())
+        state = self._state(
+            messages=[
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "run_research_batch", "args": {}, "id": "research-1"}],
+                )
+            ]
+        )
+
+        assert middleware.after_model(state, None) is None
+
+    def test_committed_writer_output_allows_terminal_response(self) -> None:
+        tracker = FinalReportCommitTracker()
+        tracker.record("# Final report")
+        middleware = RequiredWriterDelegationMiddleware(tracker=tracker)
+        state = self._state(files={"/shared/output.md": {"content": "# Final report"}})
+
+        assert middleware.after_model(state, None) is None
+
+    def test_second_terminal_response_without_writer_fails_closed(self) -> None:
+        middleware = RequiredWriterDelegationMiddleware(tracker=FinalReportCommitTracker())
+        first = middleware.after_model(self._state(), None)
+        correction = first["messages"][0]
+        state = self._state(
+            messages=[AIMessage(content="No report."), correction, AIMessage(content="Still no report.")]
+        )
+
+        with pytest.raises(RuntimeError, match="^writer_output_not_committed$"):
+            middleware.after_model(state, None)
+
+    def test_matching_user_input_does_not_consume_delegation_retry(self) -> None:
+        middleware = RequiredWriterDelegationMiddleware(tracker=FinalReportCommitTracker())
+        state = self._state(messages=[HumanMessage(content=middleware._retry_message), AIMessage(content="No report.")])
+
+        update = middleware.after_model(state, None)
+
+        assert update is not None
+        assert update["jump_to"] == "model"
 
 
 class TestToolNameSanitizationMiddleware:
@@ -1134,8 +1332,8 @@ class TestSourceRegistryMiddleware:
         req.tool_call = {"name": tool_name}
         return req
 
-    def _make_tool_result(self, content: str):
-        return ToolMessage(content=content, tool_call_id="tc1")
+    def _make_tool_result(self, content: str, *, status: str = "success"):
+        return ToolMessage(content=content, tool_call_id="tc1", status=status)
 
     # -- URL extraction --
 
@@ -1163,6 +1361,26 @@ class TestSourceRegistryMiddleware:
 
         urls = {s.url for s in middleware.registry.all_sources()}
         assert urls == {"https://a.com/page", "https://b.com/page"}
+
+    @pytest.mark.asyncio
+    async def test_typed_error_result_is_not_captured(self, middleware):
+        content = "Search failed. See https://provider.example/errors/unknown"
+        handler = AsyncMock(return_value=self._make_tool_result(content, status="error"))
+        request = self._make_request("advanced_web_search_tool")
+
+        await middleware.awrap_tool_call(request, handler)
+
+        assert middleware.registry.all_sources() == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("content", ["{}", "[]", '{"status": "error"}'])
+    async def test_failed_structured_result_is_not_registered_as_tool_evidence(self, middleware, content: str):
+        handler = AsyncMock(return_value=self._make_tool_result(content))
+        request = self._make_request("advanced_web_search_tool")
+
+        await middleware.awrap_tool_call(request, handler)
+
+        assert middleware.registry.all_sources() == []
 
     @pytest.mark.asyncio
     async def test_knowledge_layer_citation_key_captured(self, middleware):

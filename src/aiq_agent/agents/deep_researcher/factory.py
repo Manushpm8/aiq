@@ -50,10 +50,12 @@ from .custom_middleware import FinalReportCommitTracker
 from .custom_middleware import FinalReportOwnershipGuardMiddleware
 from .custom_middleware import PlanPersistenceMiddleware
 from .custom_middleware import RequiredOutputFileMiddleware
+from .custom_middleware import RequiredWriterDelegationMiddleware
 from .custom_middleware import SourceRegistryMiddleware
 from .custom_middleware import SourceRoutingGuardMiddleware
 from .custom_middleware import SourceRoutingPersistenceMiddleware
 from .custom_middleware import StateMutationGuardMiddleware
+from .custom_middleware import StructuredResponseTextFallbackMiddleware
 from .custom_middleware import TodoQuotaMiddleware
 from .custom_middleware import TodoSuppressionMiddleware
 from .custom_middleware import ToolNameSanitizationMiddleware
@@ -386,6 +388,7 @@ def build_researcher_runnable(
             FilesystemMiddleware(backend=backend, _permissions=filesystem_permissions),
             create_summarization_middleware(researcher_model, backend),
             PatchToolCallsMiddleware(),
+            StructuredResponseTextFallbackMiddleware(ResearchNotes),
             *researcher_middleware,
             *(visibility_middleware or []),
         ]
@@ -457,6 +460,7 @@ def build_deep_research_subagents(context: DeepResearchGraphContext) -> list[dic
                         sandbox_enabled=context.runtime.execution_enabled,
                     ),
                     TodoSuppressionMiddleware(),
+                    StructuredResponseTextFallbackMiddleware(SourceRoutingPlan),
                     SourceRoutingPersistenceMiddleware(
                         backend=context.backend,
                         state_budget=context.state_budget,
@@ -487,6 +491,7 @@ def build_deep_research_subagents(context: DeepResearchGraphContext) -> list[dic
                     sandbox_enabled=context.runtime.execution_enabled,
                 ),
                 TodoSuppressionMiddleware(),
+                StructuredResponseTextFallbackMiddleware(ResearchPlan),
                 PlanPersistenceMiddleware(
                     backend=context.backend,
                     state_budget=context.state_budget,
@@ -658,6 +663,7 @@ def build_deep_research_graph(
                     sandbox_enabled=context.runtime.execution_enabled,
                 ),
                 TodoQuotaMiddleware(resource_limits=context.resource_limits),
+                RequiredWriterDelegationMiddleware(tracker=context.final_report_tracker),
             ]
         ),
         permissions=context.permissions(ORCHESTRATOR_AGENT),

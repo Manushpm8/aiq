@@ -32,6 +32,8 @@ from langchain_core.messages import AIMessage
 from langchain_core.messages import HumanMessage
 from langchain_core.messages import SystemMessage
 from langchain_core.messages import ToolMessage
+from pydantic import BaseModel
+from pydantic import ValidationError
 
 from aiq_agent.common import get_source_id_for_tool
 from aiq_agent.common import load_prompt
@@ -39,6 +41,7 @@ from aiq_agent.common import render_prompt_template
 from aiq_agent.common.citation_verification import SourceEntry
 from aiq_agent.common.citation_verification import SourceRegistry
 from aiq_agent.common.citation_verification import extract_sources_from_tool_result
+from aiq_agent.common.citation_verification import is_non_citable_status_output
 
 from .resource_limits import DeepResearchResourceLimits
 from .resource_limits import StateBudgetLedger
@@ -55,6 +58,7 @@ _SOURCE_ROUTING_PATH = "/shared/source_routing.json"
 _SOURCE_ROUTING_STATE_KEYS = (_SOURCE_ROUTING_PATH, "/source_routing.json")
 FINAL_REPORT_PATH = "/shared/output.md"
 FINAL_REPORT_STATE_PATHS = (FINAL_REPORT_PATH, "/output.md")
+_GENERATED_RETRY_MARKER = "aiq_generated_retry"
 _UNRESOLVED_SANDBOX_PATH_PATTERN = re.compile(
     r"<\s*sandbox_(?:artifact_dir|workdir)\s*>|\{\{\s*sandbox_(?:artifact_dir|workdir)\s*\}\}"
 )
@@ -96,6 +100,63 @@ def _tool_result_failed(result: object) -> bool:
     """Return whether a filesystem tool result reports an error."""
     status = result.get("status") if isinstance(result, dict) else getattr(result, "status", None)
     return status == "error"
+
+
+class StructuredResponseTextFallbackMiddleware(AgentMiddleware):
+    """Recover one exact JSON response when a provider skips the output tool."""
+
+    def __init__(self, schema: type[BaseModel]) -> None:
+        self.schema = schema
+        schema_json = json.dumps(schema.model_json_schema(), separators=(",", ":"), ensure_ascii=False)
+        self._correction = (
+            "The previous response did not produce the required structured result. Do not call tools. "
+            "Return exactly one JSON object matching this JSON Schema, with no Markdown fences or prose:\n"
+            f"{schema_json}"
+        )
+
+    def _promote(self, response: ModelResponse) -> ModelResponse:
+        if response.structured_response is not None or len(response.result) != 1:
+            return response
+        message = response.result[0]
+        if not isinstance(message, AIMessage) or message.tool_calls or not isinstance(message.content, str):
+            return response
+        try:
+            structured = self.schema.model_validate_json(message.content)
+        except ValidationError:
+            return response
+        logger.info("Recovered %s from schema-valid JSON message content", self.schema.__name__)
+        return ModelResponse(result=response.result, structured_response=structured)
+
+    @staticmethod
+    def _needs_correction(response: ModelResponse) -> bool:
+        if response.structured_response is not None or len(response.result) != 1:
+            return False
+        message = response.result[0]
+        return isinstance(message, AIMessage) and not message.tool_calls and isinstance(message.content, str)
+
+    def _correction_request(self, request):
+        return request.override(
+            messages=[*request.messages, HumanMessage(content=self._correction)],
+            tools=[],
+            tool_choice=None,
+            response_format=None,
+        )
+
+    def wrap_model_call(self, request, handler):
+        """Promote JSON text, with one tools-disabled corrective call when needed."""
+        response = self._promote(handler(request))
+        if not self._needs_correction(response):
+            return response
+        logger.warning("Retrying %s as a tools-disabled JSON response", self.schema.__name__)
+        return self._promote(handler(self._correction_request(request)))
+
+    async def awrap_model_call(self, request, handler):
+        """Promote JSON text, with one tools-disabled corrective call when needed."""
+        response = self._promote(await handler(request))
+        if not self._needs_correction(response):
+            return response
+        logger.warning("Retrying %s as a tools-disabled JSON response", self.schema.__name__)
+        return self._promote(await handler(self._correction_request(request)))
 
 
 class FinalReportCommitTracker:
@@ -514,7 +575,11 @@ class RequiredOutputFileMiddleware(AgentMiddleware):
         return self.tracker.committed_text(files, paths=self.paths) is not None
 
     def _retry_count(self, messages: list[object]) -> int:
-        return sum(isinstance(message, HumanMessage) and message.content == self._retry_message for message in messages)
+        return sum(
+            isinstance(message, HumanMessage)
+            and message.additional_kwargs.get(_GENERATED_RETRY_MARKER) == "required_output_file"
+            for message in messages
+        )
 
     def _check_after_model(self, state: object) -> dict[str, object] | None:
         messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
@@ -534,7 +599,12 @@ class RequiredOutputFileMiddleware(AgentMiddleware):
 
         logger.warning("Agent reported completion before committing the required output; requesting corrective turn")
         return {
-            "messages": [HumanMessage(content=self._retry_message)],
+            "messages": [
+                HumanMessage(
+                    content=self._retry_message,
+                    additional_kwargs={_GENERATED_RETRY_MARKER: "required_output_file"},
+                )
+            ],
             "jump_to": "model",
         }
 
@@ -546,6 +616,77 @@ class RequiredOutputFileMiddleware(AgentMiddleware):
     @hook_config(can_jump_to=["model"])
     async def aafter_model(self, state, runtime):
         """Verify asynchronous writer completion and request one local repair when needed."""
+        return self._check_after_model(state)
+
+
+class RequiredWriterDelegationMiddleware(AgentMiddleware):
+    """Prevent the orchestrator from terminating before writer-owned publication.
+
+    Source failures can make an orchestrator conclude that no further research
+    is useful and return ordinary assistant text without ever delegating to the
+    writer. Give it one bounded corrective turn that forbids more research and
+    requires writer delegation. The writer's existing commit middleware remains
+    the only component allowed to publish the final report.
+    """
+
+    def __init__(
+        self,
+        *,
+        tracker: FinalReportCommitTracker,
+        max_retries: int = 1,
+        reason_code: str = "writer_output_not_committed",
+    ) -> None:
+        if max_retries < 0:
+            raise ValueError("max_retries must be non-negative")
+        self.tracker = tracker
+        self.max_retries = max_retries
+        self.reason_code = reason_code
+        self._retry_message = (
+            "The run cannot finish because writer-agent has not committed /shared/output.md. "
+            "Do not perform or retry source research. Delegate to writer-agent now using the Writer Delegation "
+            "Template and the plan, research notes, verified sources, and explicit evidence gaps already available. "
+            "After writer-agent returns, return only its completion marker."
+        )
+
+    def _retry_count(self, messages: list[object]) -> int:
+        return sum(
+            isinstance(message, HumanMessage)
+            and message.additional_kwargs.get(_GENERATED_RETRY_MARKER) == "required_writer_delegation"
+            for message in messages
+        )
+
+    def _check_after_model(self, state: object) -> dict[str, object] | None:
+        messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
+        files = state.get("files", {}) if isinstance(state, dict) else getattr(state, "files", {})
+        if not isinstance(messages, list) or not messages:
+            return None
+        last_message = messages[-1]
+        if not isinstance(last_message, AIMessage) or last_message.tool_calls:
+            return None
+        if self.tracker.committed_text(files, paths=FINAL_REPORT_STATE_PATHS) is not None:
+            return None
+        if self._retry_count(messages) >= self.max_retries:
+            raise RuntimeError(self.reason_code)
+
+        logger.warning("Orchestrator ended before writer delegation; requesting one corrective turn")
+        return {
+            "messages": [
+                HumanMessage(
+                    content=self._retry_message,
+                    additional_kwargs={_GENERATED_RETRY_MARKER: "required_writer_delegation"},
+                )
+            ],
+            "jump_to": "model",
+        }
+
+    @hook_config(can_jump_to=["model"])
+    def after_model(self, state, runtime):
+        """Require a synchronous orchestrator to delegate writer publication."""
+        return self._check_after_model(state)
+
+    @hook_config(can_jump_to=["model"])
+    async def aafter_model(self, state, runtime):
+        """Require an asynchronous orchestrator to delegate writer publication."""
         return self._check_after_model(state)
 
 
@@ -925,8 +1066,16 @@ class SourceRegistryMiddleware(AgentMiddleware):
                 tool_name = request.tool_call.get("name", "")
             if tool_name not in self._source_tool_names:
                 return result
+            content = str(result.content)
+            if is_non_citable_status_output(content):
+                return result
             source_id = get_source_id_for_tool(tool_name)
-            sources = extract_sources_from_tool_result(tool_name, str(result.content), source_id=source_id)
+            sources = extract_sources_from_tool_result(
+                tool_name,
+                content,
+                source_id=source_id,
+                result_status=getattr(result, "status", None),
+            )
             async with self._lock:
                 active_registry = self.active_registry()
                 for source in sources:
