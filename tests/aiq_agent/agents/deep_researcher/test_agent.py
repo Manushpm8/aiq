@@ -17,6 +17,7 @@
 
 import asyncio
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -37,14 +38,19 @@ from aiq_agent.agents.deep_researcher.models import DeepResearchAgentState
 from aiq_agent.agents.deep_researcher.models import ResearchNotes
 from aiq_agent.agents.deep_researcher.models import ResearchPlan
 from aiq_agent.agents.deep_researcher.models import ResearchQuery
+from aiq_agent.agents.deep_researcher.models import SourceRoutingPlan
+from aiq_agent.agents.deep_researcher.resource_limits import DeepResearchExecutionTimeout
+from aiq_agent.agents.deep_researcher.resource_limits import DeepResearchResourceLimits
 from aiq_agent.agents.deep_researcher.tools import research as research_module
 from aiq_agent.agents.deep_researcher.tools.research import build_research_batch_tool
 from aiq_agent.agents.deep_researcher.tools.research import researcher_invoke_state
 from aiq_agent.common import LLMProvider
 from aiq_agent.common import LLMRole
+from aiq_agent.common.citation_verification import CitationIntegrityError
 from aiq_agent.common.citation_verification import EmptySourceRegistryError
 from aiq_agent.common.citation_verification import EmptySourceRegistryReason
 from aiq_agent.common.citation_verification import SourceEntry
+from aiq_agent.common.logging_utils import log_content_metadata
 from aiq_api.jobs.callbacks import AgentEventCallback
 
 
@@ -131,6 +137,7 @@ class TestDeepResearcherAgent:
             backend=backend,
             callbacks=agent.callbacks,
             max_research_concurrency=agent.max_research_concurrency,
+            resource_limits=agent.resource_limits,
             source_registry_middleware=agent.source_registry_middleware,
         )
 
@@ -161,6 +168,16 @@ class TestDeepResearcherAgent:
                 "narrative_notes": "Useful narrative notes.",
                 "language": "English",
             }
+        }
+
+    def _query_payload(self, query: str = "research query", *, subqueries: list[str] | None = None):
+        return {
+            "query": query,
+            "subqueries": subqueries or [],
+            "preferred_tools": ["web_search_tool"],
+            "fallback_tools": [],
+            "target_components": ["overview"],
+            "rationale": "Collect evidence.",
         }
 
     @pytest.fixture
@@ -282,6 +299,32 @@ class TestDeepResearcherAgent:
         assert config.sandbox.app_name == "custom-aiq"
         assert config.sandbox.packages == ("matplotlib", "pillow")
 
+    def test_register_parses_resource_limit_overrides_and_rejects_incompatible_concurrency(self):
+        """NAT config preserves downward limits and prevents a batch wider than the job budget."""
+        from pydantic import ValidationError
+
+        from aiq_agent.agents.deep_researcher.register import DeepResearchAgentConfig
+
+        config = DeepResearchAgentConfig(
+            orchestrator_llm="llm",
+            max_research_concurrency=2,
+            resource_limits={
+                "max_research_queries": 2,
+                "max_source_routing_bytes": 2048,
+                "max_source_tool_calls": 8,
+            },
+        )
+
+        assert config.resource_limits.max_research_queries == 2
+        assert config.resource_limits.max_source_routing_bytes == 2048
+        assert config.resource_limits.max_source_tool_calls == 8
+        with pytest.raises(ValidationError, match="max_research_concurrency"):
+            DeepResearchAgentConfig(
+                orchestrator_llm="llm",
+                max_research_concurrency=3,
+                resource_limits={"max_research_queries": 2},
+            )
+
     def test_register_resolves_named_runtime_config_refs(self):
         """Deep research agent config can reference config-only skills and sandbox functions."""
         from aiq_agent.agents.deep_researcher.deepagents_runtime import DeepResearchSandboxConfig
@@ -352,6 +395,52 @@ class TestDeepResearcherAgent:
             request_agent.finalize.assert_called_once_with(interrupted=True)
         else:
             request_agent.finalize.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("error", "expected_interrupted"),
+        [
+            (DeepResearchExecutionTimeout("job budget expired"), True),
+            (TimeoutError("provider operation timed out"), False),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_registered_run_only_forces_cleanup_for_job_resource_timeout(self, error, expected_interrupted):
+        """Only the job wall-clock exception forcibly terminates request-owned execution."""
+        from aiq_agent.agents.deep_researcher.deepagents_runtime import DeepResearchSandboxConfig
+        from aiq_agent.agents.deep_researcher.register import DeepResearchAgentConfig
+        from aiq_agent.agents.deep_researcher.register import deep_research_agent
+
+        builder = MagicMock()
+        builder.get_tools = AsyncMock(return_value=[web_search_tool])
+        builder.get_llm = AsyncMock(return_value=MagicMock())
+        template_agent = MagicMock()
+        request_agent = MagicMock()
+        request_agent.run = AsyncMock(side_effect=error)
+        config = DeepResearchAgentConfig(
+            orchestrator_llm="llm",
+            tools=["web_search_tool"],
+            verbose=False,
+            sandbox=DeepResearchSandboxConfig(),
+        )
+        state = DeepResearchAgentState(messages=[HumanMessage(content="bounded request")])
+
+        with (
+            patch(
+                "aiq_agent.agents.deep_researcher.register.DeepResearcherAgent",
+                side_effect=[template_agent, request_agent],
+            ),
+            patch("aiq_agent.common.validate_tool_availability", return_value=(True, 1, [])),
+        ):
+            registration = deep_research_agent.__wrapped__(config, builder)
+            function_info = await anext(registration)
+            assert function_info.single_fn is not None
+            try:
+                with pytest.raises(type(error)):
+                    await function_info.single_fn(state)
+            finally:
+                await registration.aclose()
+
+        request_agent.finalize.assert_called_once_with(interrupted=expected_interrupted)
 
     @pytest.mark.parametrize(
         ("data_sources", "tool_description", "expected_reason"),
@@ -530,7 +619,7 @@ class TestDeepResearcherAgent:
             assert real_tool.name not in {tool.name for tool in kwargs["tools"]}
             subagents = {subagent["name"]: subagent for subagent in kwargs["subagents"]}
             assert set(subagents) == {"source-router-agent", "planner-agent", "writer-agent"}
-            assert "response_format" not in subagents["source-router-agent"]
+            assert subagents["source-router-agent"]["response_format"] is SourceRoutingPlan
             assert "skills" not in subagents["source-router-agent"]
             assert {tool.name for tool in subagents["source-router-agent"]["tools"]} == {"lookup_source_catalog"}
             assert real_tool.name not in {tool.name for tool in subagents["source-router-agent"]["tools"]}
@@ -598,7 +687,7 @@ class TestDeepResearcherAgent:
             assert real_tool.name not in {tool.name for tool in create.call_args.kwargs["tools"]}
             subagents = {subagent["name"]: subagent for subagent in create.call_args.kwargs["subagents"]}
             assert set(subagents) == {"source-router-agent", "planner-agent", "writer-agent"}
-            assert "response_format" not in subagents["source-router-agent"]
+            assert subagents["source-router-agent"]["response_format"] is SourceRoutingPlan
             assert "skills" not in subagents["source-router-agent"]
             assert subagents["planner-agent"]["response_format"] is ResearchPlan
             assert real_tool.name in {tool.name for tool in subagents["planner-agent"]["tools"]}
@@ -933,6 +1022,251 @@ class TestDeepResearcherAgent:
         assert '"subqueries": []' in call_state["messages"][0].content
 
     @pytest.mark.asyncio
+    async def test_research_batch_query_and_note_count_ledger_is_job_wide(
+        self,
+        mock_llm_provider,
+        real_tool,
+    ):
+        """At most one note is persisted per accepted query, so the 20-query ceiling also caps notes."""
+        from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
+
+        fake_runnable = MagicMock()
+        fake_runnable.ainvoke = AsyncMock(return_value=self._structured_notes_response())
+        backend = MagicMock()
+        backend.upload_files.side_effect = lambda files: [
+            FileUploadResponse(path=path, error=None) for path, _content in files
+        ]
+        agent = DeepResearcherAgent(
+            llm_provider=mock_llm_provider,
+            tools=[real_tool],
+            resource_limits=DeepResearchResourceLimits(max_research_queries=2),
+        )
+        batch_tool = self._build_batch_tool(agent, fake_runnable, backend=backend)
+
+        await batch_tool.ainvoke({"queries": [self._query_payload("one")]})
+        await batch_tool.ainvoke({"queries": [self._query_payload("two")]})
+
+        with pytest.raises(ValueError, match="2-query per-job limit"):
+            await batch_tool.ainvoke({"queries": [self._query_payload("three")]})
+        assert fake_runnable.ainvoke.await_count == 2
+        assert backend.upload_files.call_count == 2
+        assert sum(len(call.args[0]) for call in backend.upload_files.call_args_list) == 2
+
+    @pytest.mark.asyncio
+    async def test_research_batch_query_character_boundary_is_exact(
+        self,
+        mock_llm_provider,
+        real_tool,
+    ):
+        """Main and nested subquery text shares one exact aggregate job ledger."""
+        from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
+
+        accepted_runnable = MagicMock()
+        accepted_runnable.ainvoke = AsyncMock(return_value=self._structured_notes_response())
+        accepted_agent = DeepResearcherAgent(
+            llm_provider=mock_llm_provider,
+            tools=[real_tool],
+            resource_limits=DeepResearchResourceLimits(
+                max_research_queries=1,
+                max_total_query_chars=5,
+            ),
+        )
+        accepted_tool = self._build_batch_tool(accepted_agent, accepted_runnable)
+
+        await accepted_tool.ainvoke({"queries": [self._query_payload("abc", subqueries=["de"])]})
+
+        accepted_runnable.ainvoke.assert_awaited_once()
+        rejected_runnable = MagicMock()
+        rejected_runnable.ainvoke = AsyncMock(return_value=self._structured_notes_response())
+        rejected_agent = DeepResearcherAgent(
+            llm_provider=mock_llm_provider,
+            tools=[real_tool],
+            resource_limits=DeepResearchResourceLimits(
+                max_research_queries=1,
+                max_total_query_chars=5,
+            ),
+        )
+        rejected_tool = self._build_batch_tool(rejected_agent, rejected_runnable)
+        with pytest.raises(ValueError, match="5-character aggregate query limit"):
+            await rejected_tool.ainvoke({"queries": [self._query_payload("abc", subqueries=["def"])]})
+        rejected_runnable.ainvoke.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_research_note_byte_boundary_is_exact_and_precedes_persistence(
+        self,
+        mock_llm_provider,
+        real_tool,
+    ):
+        """The serialized ResearchNotes payload passes at equality and fails one byte below."""
+        from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
+
+        payload = self._query_payload("one")
+        query = ResearchQuery.model_validate(payload)
+        note = ResearchNotes.model_validate(self._structured_notes_response()["structured_response"])
+        note_size = len(research_module._research_note_files([query], [note])[0][1])
+
+        accepted_runnable = MagicMock()
+        accepted_runnable.ainvoke = AsyncMock(return_value=self._structured_notes_response())
+        accepted_backend = MagicMock()
+        accepted_backend.upload_files.side_effect = lambda files: [
+            FileUploadResponse(path=path, error=None) for path, _content in files
+        ]
+        accepted_agent = DeepResearcherAgent(
+            llm_provider=mock_llm_provider,
+            tools=[real_tool],
+            resource_limits=DeepResearchResourceLimits(
+                max_research_queries=1,
+                max_research_note_bytes=note_size,
+                max_total_research_note_bytes=note_size,
+            ),
+        )
+        accepted_tool = self._build_batch_tool(accepted_agent, accepted_runnable, backend=accepted_backend)
+
+        await accepted_tool.ainvoke({"queries": [payload]})
+
+        accepted_backend.upload_files.assert_called_once()
+        rejected_runnable = MagicMock()
+        rejected_runnable.ainvoke = AsyncMock(return_value=self._structured_notes_response())
+        rejected_backend = MagicMock()
+        rejected_agent = DeepResearcherAgent(
+            llm_provider=mock_llm_provider,
+            tools=[real_tool],
+            resource_limits=DeepResearchResourceLimits(
+                max_research_queries=1,
+                max_research_note_bytes=note_size - 1,
+                max_total_research_note_bytes=note_size,
+            ),
+        )
+        rejected_tool = self._build_batch_tool(rejected_agent, rejected_runnable, backend=rejected_backend)
+        with pytest.raises(ValueError, match="per-note limit"):
+            await rejected_tool.ainvoke({"queries": [payload]})
+        rejected_backend.upload_files.assert_not_called()
+        assert rejected_agent.source_registry_middleware.get_source_list_text() is None
+
+    @pytest.mark.asyncio
+    async def test_research_note_aggregate_ledger_spans_batches(
+        self,
+        mock_llm_provider,
+        real_tool,
+    ):
+        """Repeated calls cannot exceed the shared note-byte ledger before persistence."""
+        from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
+
+        query = ResearchQuery.model_validate(self._query_payload("one"))
+        note = ResearchNotes.model_validate(self._structured_notes_response()["structured_response"])
+        note_size = len(research_module._research_note_files([query], [note])[0][1])
+        fake_runnable = MagicMock()
+        fake_runnable.ainvoke = AsyncMock(return_value=self._structured_notes_response())
+        backend = MagicMock()
+        backend.upload_files.side_effect = lambda files: [
+            FileUploadResponse(path=path, error=None) for path, _content in files
+        ]
+        agent = DeepResearcherAgent(
+            llm_provider=mock_llm_provider,
+            tools=[real_tool],
+            resource_limits=DeepResearchResourceLimits(
+                max_research_queries=3,
+                max_research_note_bytes=note_size,
+                max_total_research_note_bytes=note_size * 2,
+            ),
+        )
+        batch_tool = self._build_batch_tool(agent, fake_runnable, backend=backend)
+
+        await batch_tool.ainvoke({"queries": [self._query_payload("one")]})
+        await batch_tool.ainvoke({"queries": [self._query_payload("two")]})
+
+        with pytest.raises(ValueError, match="aggregate per-job limit"):
+            await batch_tool.ainvoke({"queries": [self._query_payload("three")]})
+        assert fake_runnable.ainvoke.await_count == 3
+        assert backend.upload_files.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_research_note_persistence_failure_restores_byte_capacity_for_retry(
+        self,
+        mock_llm_provider,
+        real_tool,
+    ):
+        """A transient upload failure releases provisional note accounting for one retry."""
+        from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
+
+        query = ResearchQuery.model_validate(self._query_payload("one"))
+        note = ResearchNotes.model_validate(self._structured_notes_response()["structured_response"])
+        note_size = len(research_module._research_note_files([query], [note])[0][1])
+        fake_runnable = MagicMock()
+        fake_runnable.ainvoke = AsyncMock(return_value=self._structured_notes_response())
+        backend = MagicMock()
+        upload_attempts = 0
+
+        def _upload(files):
+            nonlocal upload_attempts
+            upload_attempts += 1
+            if upload_attempts == 1:
+                raise RuntimeError("transient")
+            return [FileUploadResponse(path=path, error=None) for path, _content in files]
+
+        backend.upload_files.side_effect = _upload
+        agent = DeepResearcherAgent(
+            llm_provider=mock_llm_provider,
+            tools=[real_tool],
+            resource_limits=DeepResearchResourceLimits(
+                max_research_queries=2,
+                max_research_note_bytes=note_size,
+                max_total_research_note_bytes=note_size,
+            ),
+        )
+        register_sources = MagicMock(wraps=agent.source_registry_middleware.register_research_note_sources)
+        agent.source_registry_middleware.register_research_note_sources = register_sources
+        batch_tool = self._build_batch_tool(agent, fake_runnable, backend=backend)
+
+        with pytest.raises(RuntimeError, match="transient"):
+            await batch_tool.ainvoke({"queries": [self._query_payload("one")]})
+        register_sources.assert_not_called()
+        result = await batch_tool.ainvoke({"queries": [self._query_payload("two")]})
+
+        assert json.loads(result)[0]["query_topic"] == "Research Topic"
+        assert backend.upload_files.call_count == 2
+        register_sources.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_research_query_reservation_is_concurrency_safe_and_new_tool_resets_ledger(
+        self,
+        mock_llm_provider,
+        real_tool,
+    ):
+        """Concurrent batches cannot race past one query, while a new job tool starts fresh."""
+        from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
+
+        release = asyncio.Event()
+
+        async def _wait_for_release(*_args, **_kwargs):
+            await release.wait()
+            return self._structured_notes_response()
+
+        fake_runnable = MagicMock()
+        fake_runnable.ainvoke = AsyncMock(side_effect=_wait_for_release)
+        agent = DeepResearcherAgent(
+            llm_provider=mock_llm_provider,
+            tools=[real_tool],
+            resource_limits=DeepResearchResourceLimits(max_research_queries=1),
+        )
+        batch_tool = self._build_batch_tool(agent, fake_runnable)
+        first = asyncio.create_task(batch_tool.ainvoke({"queries": [self._query_payload("one")]}))
+        await asyncio.sleep(0)
+        second = asyncio.create_task(batch_tool.ainvoke({"queries": [self._query_payload("two")]}))
+        await asyncio.sleep(0)
+        release.set()
+        results = await asyncio.gather(first, second, return_exceptions=True)
+
+        assert fake_runnable.ainvoke.await_count == 1
+        assert sum(isinstance(result, ValueError) for result in results) == 1
+
+        fresh_runnable = MagicMock()
+        fresh_runnable.ainvoke = AsyncMock(return_value=self._structured_notes_response())
+        fresh_tool = self._build_batch_tool(agent, fresh_runnable)
+        await fresh_tool.ainvoke({"queries": [self._query_payload("fresh")]})
+        fresh_runnable.ainvoke.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_run_research_batch_waits_for_slow_workers_and_preserves_errors(
         self,
         mock_llm_provider,
@@ -1250,6 +1584,147 @@ class TestDeepResearcherAgent:
             assert len(result.messages) > 0
 
     @pytest.mark.asyncio
+    async def test_run_logs_query_metadata_without_customer_content(
+        self,
+        mock_llm_provider,
+        real_tool,
+        mock_create_deep_agent,
+        caplog,
+    ):
+        secret_query = "research CUDA using nvapi-vdr-fake-secret-do-not-log"  # pragma: allowlist secret
+        caplog.set_level(logging.INFO, logger="aiq_agent.agents.deep_researcher.agent")
+        with (
+            patch("aiq_agent.agents.deep_researcher.factory.create_deep_agent", return_value=mock_create_deep_agent),
+            patch(
+                "aiq_agent.agents.deep_researcher.agent.FinalReportCommitTracker",
+                return_value=committed_tracker(DEFAULT_REPORT),
+            ),
+        ):
+            from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
+
+            agent = DeepResearcherAgent(llm_provider=mock_llm_provider, tools=[real_tool])
+            agent.source_registry_middleware.registry.add(SourceEntry(url="https://example.com"))
+
+            await agent.run(DeepResearchAgentState(messages=[HumanMessage(content=secret_query)]))
+
+        assert secret_query not in caplog.text
+        assert "nvapi-vdr-fake-secret-do-not-log" not in caplog.text
+        assert log_content_metadata(secret_query) in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_run_counts_query_and_clarifier_at_exact_input_boundary(
+        self,
+        mock_llm_provider,
+        real_tool,
+        mock_create_deep_agent,
+    ):
+        """The request ceiling covers both prompt sources and accepts exact equality."""
+        with (
+            patch("aiq_agent.agents.deep_researcher.factory.create_deep_agent", return_value=mock_create_deep_agent),
+            patch(
+                "aiq_agent.agents.deep_researcher.agent.FinalReportCommitTracker",
+                return_value=committed_tracker(DEFAULT_REPORT),
+            ),
+        ):
+            from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
+
+            agent = DeepResearcherAgent(
+                llm_provider=mock_llm_provider,
+                tools=[real_tool],
+                resource_limits=DeepResearchResourceLimits(max_input_chars=10),
+            )
+            state = DeepResearchAgentState(
+                messages=[HumanMessage(content="1234")],
+                clarifier_result="567890",
+            )
+            agent.source_registry_middleware.registry.add(SourceEntry(url="https://example.com"))
+
+            result = await agent.run(state)
+
+            assert result is not None
+            mock_create_deep_agent.ainvoke.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_run_rejects_combined_input_before_state_preparation_or_graph_build(
+        self,
+        mock_llm_provider,
+        real_tool,
+        mock_create_deep_agent,
+    ):
+        """One extra clarification character fails before state mutation or model work."""
+        with patch(
+            "aiq_agent.agents.deep_researcher.factory.create_deep_agent",
+            return_value=mock_create_deep_agent,
+        ):
+            from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
+
+            agent = DeepResearcherAgent(
+                llm_provider=mock_llm_provider,
+                tools=[real_tool],
+                resource_limits=DeepResearchResourceLimits(max_input_chars=10),
+            )
+            state = DeepResearchAgentState(
+                messages=[HumanMessage(content="1234")],
+                clarifier_result="567890X",
+            )
+            agent.deepagents_runtime.prepare_state_files = MagicMock(side_effect=AssertionError("must not prepare"))
+            agent._build_orchestrator_agent = MagicMock(side_effect=AssertionError("must not build"))
+
+            with pytest.raises(ValueError, match="query and clarification context"):
+                await agent.run(state)
+
+            agent.deepagents_runtime.prepare_state_files.assert_not_called()
+            agent._build_orchestrator_agent.assert_not_called()
+            mock_create_deep_agent.ainvoke.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_run_enforces_graph_execution_timeout(self, mock_llm_provider, real_tool):
+        """A graph that exceeds the configured job wall clock is cancelled."""
+        mock_agent = MagicMock()
+        mock_agent.with_config = MagicMock(return_value=mock_agent)
+
+        async def _slow_invoke(*_args, **_kwargs):
+            await asyncio.sleep(1)
+
+        mock_agent.ainvoke = AsyncMock(side_effect=_slow_invoke)
+        with patch("aiq_agent.agents.deep_researcher.factory.create_deep_agent", return_value=mock_agent):
+            from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
+
+            agent = DeepResearcherAgent(
+                llm_provider=mock_llm_provider,
+                tools=[real_tool],
+                resource_limits=DeepResearchResourceLimits(max_execution_seconds=0.01),
+            )
+            state = DeepResearchAgentState(messages=[HumanMessage(content="query")])
+
+            with pytest.raises(DeepResearchExecutionTimeout):
+                await agent.run(state)
+
+            mock_agent.ainvoke.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_run_does_not_reclassify_inner_provider_timeout(self, mock_llm_provider, real_tool):
+        """An inner operation TimeoutError is not mistaken for the job wall-clock deadline."""
+        mock_agent = MagicMock()
+        mock_agent.with_config = MagicMock(return_value=mock_agent)
+        mock_agent.ainvoke = AsyncMock(side_effect=TimeoutError("provider request timed out"))
+
+        with patch("aiq_agent.agents.deep_researcher.factory.create_deep_agent", return_value=mock_agent):
+            from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
+
+            agent = DeepResearcherAgent(
+                llm_provider=mock_llm_provider,
+                tools=[real_tool],
+                resource_limits=DeepResearchResourceLimits(max_execution_seconds=1),
+            )
+            state = DeepResearchAgentState(messages=[HumanMessage(content="query")])
+
+            with pytest.raises(TimeoutError) as exc:
+                await agent.run(state)
+
+            assert type(exc.value) is TimeoutError
+
+    @pytest.mark.asyncio
     async def test_run_empty_messages(self, mock_llm_provider, real_tool, mock_create_deep_agent):
         """Test run() with empty messages."""
         with (
@@ -1328,7 +1803,11 @@ class TestDeepResearcherAgent:
                 with pytest.raises(Exception, match="Agent error"):
                     await agent.run(state)
             assert mock_agent.ainvoke.await_count == 1
-            assert caplog.messages.count("Deep Research Subagent failed: Agent error") == 1
+            expected_log = (
+                f"Deep Research Subagent failed (error_type=Exception detail_{log_content_metadata('Agent error')})"
+            )
+            assert caplog.messages.count(expected_log) == 1
+            assert "Agent error" not in caplog.text
 
     @pytest.mark.parametrize(
         ("data_sources", "enable_citation_verification", "expected_reason"),
@@ -1804,12 +2283,14 @@ class TestDeepResearcherCitationVerification:
         return web_search_tool
 
     @pytest.mark.asyncio
-    async def test_run_returns_report_when_verify_finds_no_valid_citations(self, mock_llm_provider, real_tool, caplog):
-        """Verifier false negatives degrade to a warning instead of discarding the report."""
+    async def test_run_fails_closed_when_finalization_removes_all_verified_citations(
+        self, mock_llm_provider, real_tool
+    ):
+        """A citationless post-processed report must not be published as a successful result."""
         from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
 
         report = "CUDA findings here [1].\n\n## Sources\n[1] CUDA Docs: https://docs.nvidia.com/cuda/"
-        sanitized_report = f"{report}\n"
+        sanitized_report = "CUDA findings here.\n\n## Sources\n"
         deep_result = {
             "messages": [AIMessage(content="done")],
             "files": output_markdown_file(report),
@@ -1843,28 +2324,35 @@ class TestDeepResearcherCitationVerification:
                 SourceEntry(url="https://docs.nvidia.com/cuda/", title="CUDA Docs", tool_name="web_search")
             )
 
-            # Force the verifier to report "no valid citations" while leaving the report unchanged,
-            # so we can assert post-processing does not synthesize a citation.
+            # The citation verifies initially, but a later finalization step drops
+            # both its marker and source definition.
             with (
                 patch(
                     "aiq_agent.agents.deep_researcher.agent.verify_citations",
-                    return_value=MagicMock(
-                        verified_report=report,
-                        removed_citations=[],
-                        valid_citations=[],
-                    ),
+                    side_effect=[
+                        MagicMock(
+                            verified_report=report,
+                            removed_citations=[],
+                            valid_citations=[
+                                {
+                                    "number": 1,
+                                    "url": "https://docs.nvidia.com/cuda/",
+                                    "citation_key": None,
+                                    "line": "[1] CUDA Docs: https://docs.nvidia.com/cuda/",
+                                }
+                            ],
+                        ),
+                        MagicMock(verified_report=sanitized_report, removed_citations=[], valid_citations=[]),
+                    ],
                 ),
                 patch(
                     "aiq_agent.agents.deep_researcher.agent.sanitize_report",
                     return_value=MagicMock(sanitized_report=sanitized_report),
                 ),
-                caplog.at_level("WARNING", logger="aiq_agent.agents.deep_researcher.agent"),
             ):
                 state = DeepResearchAgentState(messages=[HumanMessage(content="What is CUDA?")])
-                result = await agent.run(state)
-
-        assert result.messages[-1].content == sanitized_report
-        assert "Citation verification found no valid citations" in caplog.text
+                with pytest.raises(CitationIntegrityError, match="citation_integrity_lost"):
+                    await agent.run(state)
 
     @pytest.mark.asyncio
     async def test_run_verifies_and_sanitizes_writer_markdown(self, mock_llm_provider, real_tool):
@@ -1892,7 +2380,8 @@ class TestDeepResearcherCitationVerification:
                 return_value=committed_tracker(raw_answer),
             ),
         ):
-            agent = DeepResearcherAgent(llm_provider=mock_llm_provider, tools=[real_tool])
+            callback = MagicMock(spec=AgentEventCallback)
+            agent = DeepResearcherAgent(llm_provider=mock_llm_provider, tools=[real_tool], callbacks=[callback])
             agent.source_registry_middleware.registry.add(
                 SourceEntry(url="https://docs.nvidia.com/cuda/", title="CUDA Docs", tool_name="web_search")
             )
@@ -1900,11 +2389,32 @@ class TestDeepResearcherCitationVerification:
             with (
                 patch(
                     "aiq_agent.agents.deep_researcher.agent.verify_citations",
-                    return_value=MagicMock(
-                        verified_report=verified_answer,
-                        removed_citations=[],
-                        valid_citations=[MagicMock()],
-                    ),
+                    side_effect=[
+                        MagicMock(
+                            verified_report=verified_answer,
+                            removed_citations=[],
+                            valid_citations=[
+                                {
+                                    "number": 1,
+                                    "url": "https://docs.nvidia.com/cuda/",
+                                    "citation_key": None,
+                                    "line": "[1] CUDA Docs: https://docs.nvidia.com/cuda/",
+                                }
+                            ],
+                        ),
+                        MagicMock(
+                            verified_report=sanitized_answer,
+                            removed_citations=[],
+                            valid_citations=[
+                                {
+                                    "number": 1,
+                                    "url": "https://docs.nvidia.com/cuda/",
+                                    "citation_key": None,
+                                    "line": "[1] CUDA Docs: https://docs.nvidia.com/cuda/",
+                                }
+                            ],
+                        ),
+                    ],
                 ) as verify,
                 patch(
                     "aiq_agent.agents.deep_researcher.agent.sanitize_report",
@@ -1914,6 +2424,90 @@ class TestDeepResearcherCitationVerification:
                 state = DeepResearchAgentState(messages=[HumanMessage(content="What is CUDA?")])
                 result = await agent.run(state)
 
-        verify.assert_called_once()
+        assert verify.call_count == 2
         sanitize.assert_called_once_with(verified_answer)
+        callback.emit_final_report.assert_called_once_with(
+            sanitized_answer,
+            cited_urls=["https://docs.nvidia.com/cuda/"],
+        )
         assert result.messages[-1].content == sanitized_answer
+
+    @pytest.mark.asyncio
+    async def test_run_publishes_report_reverified_after_artifact_post_processing(self, mock_llm_provider, real_tool):
+        """Artifact post-processing cannot reintroduce an unverified citation into the published report."""
+        from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
+
+        valid_url = "https://docs.nvidia.com/cuda/"
+        invalid_url = "https://fabricated.example/source"
+        report = f"CUDA is documented [1].\n\n## Sources\n[1] CUDA Docs: {valid_url}"
+        artifact_augmented_report = (
+            "CUDA is documented [1]. Fabricated claim [2].\n\n"
+            f"## Sources\n[1] CUDA Docs: {valid_url}\n[2] Fabricated: {invalid_url}"
+        )
+        deep_result = {
+            "messages": [AIMessage(content="done")],
+            "files": output_markdown_file(report),
+        }
+        mock_agent = MagicMock()
+        mock_agent.with_config = MagicMock(return_value=mock_agent)
+        mock_agent.ainvoke = AsyncMock(return_value=deep_result)
+
+        with (
+            patch("aiq_agent.agents.deep_researcher.factory.create_deep_agent", return_value=mock_agent),
+            patch(
+                "aiq_agent.agents.deep_researcher.agent.FinalReportCommitTracker",
+                return_value=committed_tracker(report),
+            ),
+        ):
+            callback = MagicMock(spec=AgentEventCallback)
+            agent = DeepResearcherAgent(llm_provider=mock_llm_provider, tools=[real_tool], callbacks=[callback])
+            agent.source_registry_middleware.registry.add(
+                SourceEntry(url=valid_url, title="CUDA Docs", tool_name="web_search")
+            )
+            artifact_manager = MagicMock()
+            artifact_manager.store.list.return_value = []
+            artifact_manager.resolve_report_references.side_effect = lambda content, _produced: content
+            artifact_manager.ensure_inline_artifacts_embedded.side_effect = lambda content, _produced: content
+            artifact_manager.append_artifact_index.return_value = artifact_augmented_report
+            agent.deepagents_runtime.artifact_manager = artifact_manager
+
+            result = await agent.run(DeepResearchAgentState(messages=[HumanMessage(content="What is CUDA?")]))
+
+        published_report = result.messages[-1].content
+        assert invalid_url not in published_report
+        assert "Fabricated claim" in published_report
+        assert "[2]" not in published_report
+        assert valid_url in published_report
+        callback.emit_final_report.assert_called_once_with(published_report, cited_urls=[valid_url])
+
+    @pytest.mark.asyncio
+    async def test_run_structurally_reverifies_fuzzy_knowledge_citation(self, mock_llm_provider, real_tool):
+        """Equivalent knowledge citation formatting must survive final integrity verification."""
+        from aiq_agent.agents.deep_researcher.agent import DeepResearcherAgent
+
+        report = "The internal result is supported [1].\n\n## Sources\n[1] Internal source report.pdf covers page 15"
+        deep_result = {
+            "messages": [AIMessage(content="done")],
+            "files": output_markdown_file(report),
+        }
+        mock_agent = MagicMock()
+        mock_agent.with_config = MagicMock(return_value=mock_agent)
+        mock_agent.ainvoke = AsyncMock(return_value=deep_result)
+
+        with (
+            patch("aiq_agent.agents.deep_researcher.factory.create_deep_agent", return_value=mock_agent),
+            patch(
+                "aiq_agent.agents.deep_researcher.agent.FinalReportCommitTracker",
+                return_value=committed_tracker(report),
+            ),
+        ):
+            callback = MagicMock(spec=AgentEventCallback)
+            agent = DeepResearcherAgent(llm_provider=mock_llm_provider, tools=[real_tool], callbacks=[callback])
+            agent.source_registry_middleware.registry.add(
+                SourceEntry(citation_key="report.pdf, p.15", source_type="knowledge_layer")
+            )
+
+            result = await agent.run(DeepResearchAgentState(messages=[HumanMessage(content="Summarize the report")]))
+
+        assert "report.pdf covers page 15" in result.messages[-1].content
+        callback.emit_final_report.assert_called_once_with(result.messages[-1].content, cited_urls=[])

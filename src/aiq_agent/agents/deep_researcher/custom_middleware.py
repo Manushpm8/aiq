@@ -32,6 +32,8 @@ from langchain_core.messages import AIMessage
 from langchain_core.messages import HumanMessage
 from langchain_core.messages import SystemMessage
 from langchain_core.messages import ToolMessage
+from pydantic import BaseModel
+from pydantic import ValidationError
 
 from aiq_agent.common import get_source_id_for_tool
 from aiq_agent.common import load_prompt
@@ -39,6 +41,11 @@ from aiq_agent.common import render_prompt_template
 from aiq_agent.common.citation_verification import SourceEntry
 from aiq_agent.common.citation_verification import SourceRegistry
 from aiq_agent.common.citation_verification import extract_sources_from_tool_result
+from aiq_agent.common.citation_verification import is_non_citable_status_output
+from aiq_agent.common.logging_utils import log_content_metadata
+
+from .resource_limits import DeepResearchResourceLimits
+from .resource_limits import StateBudgetLedger
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +59,7 @@ _SOURCE_ROUTING_PATH = "/shared/source_routing.json"
 _SOURCE_ROUTING_STATE_KEYS = (_SOURCE_ROUTING_PATH, "/source_routing.json")
 FINAL_REPORT_PATH = "/shared/output.md"
 FINAL_REPORT_STATE_PATHS = (FINAL_REPORT_PATH, "/output.md")
+_GENERATED_RETRY_MARKER = "aiq_generated_retry"
 _UNRESOLVED_SANDBOX_PATH_PATTERN = re.compile(
     r"<\s*sandbox_(?:artifact_dir|workdir)\s*>|\{\{\s*sandbox_(?:artifact_dir|workdir)\s*\}\}"
 )
@@ -93,6 +101,63 @@ def _tool_result_failed(result: object) -> bool:
     """Return whether a filesystem tool result reports an error."""
     status = result.get("status") if isinstance(result, dict) else getattr(result, "status", None)
     return status == "error"
+
+
+class StructuredResponseTextFallbackMiddleware(AgentMiddleware):
+    """Recover one exact JSON response when a provider skips the output tool."""
+
+    def __init__(self, schema: type[BaseModel]) -> None:
+        self.schema = schema
+        schema_json = json.dumps(schema.model_json_schema(), separators=(",", ":"), ensure_ascii=False)
+        self._correction = (
+            "The previous response did not produce the required structured result. Do not call tools. "
+            "Return exactly one JSON object matching this JSON Schema, with no Markdown fences or prose:\n"
+            f"{schema_json}"
+        )
+
+    def _promote(self, response: ModelResponse) -> ModelResponse:
+        if response.structured_response is not None or len(response.result) != 1:
+            return response
+        message = response.result[0]
+        if not isinstance(message, AIMessage) or message.tool_calls or not isinstance(message.content, str):
+            return response
+        try:
+            structured = self.schema.model_validate_json(message.content)
+        except ValidationError:
+            return response
+        logger.info("Recovered %s from schema-valid JSON message content", self.schema.__name__)
+        return ModelResponse(result=response.result, structured_response=structured)
+
+    @staticmethod
+    def _needs_correction(response: ModelResponse) -> bool:
+        if response.structured_response is not None or len(response.result) != 1:
+            return False
+        message = response.result[0]
+        return isinstance(message, AIMessage) and not message.tool_calls and isinstance(message.content, str)
+
+    def _correction_request(self, request):
+        return request.override(
+            messages=[*request.messages, HumanMessage(content=self._correction)],
+            tools=[],
+            tool_choice=None,
+            response_format=None,
+        )
+
+    def wrap_model_call(self, request, handler):
+        """Promote JSON text, with one tools-disabled corrective call when needed."""
+        response = self._promote(handler(request))
+        if not self._needs_correction(response):
+            return response
+        logger.warning("Retrying %s as a tools-disabled JSON response", self.schema.__name__)
+        return self._promote(handler(self._correction_request(request)))
+
+    async def awrap_model_call(self, request, handler):
+        """Promote JSON text, with one tools-disabled corrective call when needed."""
+        response = self._promote(await handler(request))
+        if not self._needs_correction(response):
+            return response
+        logger.warning("Retrying %s as a tools-disabled JSON response", self.schema.__name__)
+        return self._promote(await handler(self._correction_request(request)))
 
 
 class FinalReportCommitTracker:
@@ -304,12 +369,91 @@ class FinalReportOwnershipGuardMiddleware(AgentMiddleware):
         )
 
 
+class StateMutationGuardMiddleware(AgentMiddleware):
+    """Restrict model-issued mutations of the StateBackend filesystem by role."""
+
+    def __init__(self, *, writer: bool, sandbox_enabled: bool) -> None:
+        self.writer = writer
+        self.sandbox_enabled = sandbox_enabled
+
+    def _is_state_backed(self, path: str | None) -> bool:
+        if path is None:
+            return False
+        return not self.sandbox_enabled or path == "/shared" or path.startswith("/shared/")
+
+    @staticmethod
+    def _tool_error(tool_call: dict[str, object], reason: str, guidance: str) -> ToolMessage:
+        return ToolMessage(
+            content=f"{reason}: {guidance}",
+            tool_call_id=tool_call.get("id", "state-mutation-guard"),
+            name=tool_call.get("name"),
+            status="error",
+        )
+
+    def _rejection(self, request: object) -> ToolMessage | None:
+        """Return a denial for a guarded mutation, otherwise allow delegation."""
+        tool_call = request.tool_call if isinstance(getattr(request, "tool_call", None), dict) else {}
+        tool_name = tool_call.get("name")
+        if tool_name not in {"write_file", "edit_file"}:
+            return None
+
+        target = _tool_file_path(tool_call)
+        if not self._is_state_backed(target):
+            return None
+        if not self.writer:
+            return self._tool_error(
+                tool_call,
+                "state_mutation_role_denied",
+                "this agent has read-only access to shared research state; return structured output instead",
+            )
+        if target != FINAL_REPORT_PATH:
+            return self._tool_error(
+                tool_call,
+                "writer_state_path_denied",
+                f"writer-agent may mutate only {FINAL_REPORT_PATH}",
+            )
+        if tool_name == "edit_file":
+            return self._tool_error(
+                tool_call,
+                "writer_output_edit_not_supported",
+                f"use write_file with file_path={FINAL_REPORT_PATH} and the complete bounded report",
+            )
+        return None
+
+    def wrap_tool_call(self, request, handler):
+        """Reject unauthorized state writes before a synchronous backend call."""
+        rejection = self._rejection(request)
+        if rejection is not None:
+            return rejection
+        return handler(request)
+
+    async def awrap_tool_call(self, request, handler):
+        """Reject unauthorized state writes before an asynchronous backend call."""
+        rejection = self._rejection(request)
+        if rejection is not None:
+            return rejection
+        return await handler(request)
+
+
 class FinalReportCommitMiddleware(AgentMiddleware):
     """Commit writer-owned output with overwrite and exact-digest verification."""
 
-    def __init__(self, *, backend: object, tracker: FinalReportCommitTracker) -> None:
+    def __init__(
+        self,
+        *,
+        backend: object,
+        tracker: FinalReportCommitTracker,
+        state_budget: StateBudgetLedger | None = None,
+        resource_limits: DeepResearchResourceLimits | None = None,
+    ) -> None:
         self.backend = backend
         self.tracker = tracker
+        self.resource_limits = resource_limits or DeepResearchResourceLimits()
+        self.state_budget = state_budget or StateBudgetLedger(
+            limits=self.resource_limits,
+            files={},
+            sandbox_enabled=True,
+        )
         self._mutation_lock = asyncio.Lock()
 
     @staticmethod
@@ -330,12 +474,29 @@ class FinalReportCommitMiddleware(AgentMiddleware):
         content = args.get("content") if isinstance(args, dict) else None
         if not isinstance(content, str):
             return self._tool_error(tool_call, "writer_output_commit_failed", "report content must be text")
+        encoded = content.encode("utf-8")
+        if len(encoded) > self.resource_limits.max_final_report_bytes:
+            return self._tool_error(
+                tool_call,
+                "writer_output_limit_exceeded",
+                f"report exceeds the {self.resource_limits.max_final_report_bytes}-byte UTF-8 limit",
+            )
         try:
-            responses = await self.backend.aupload_files([(FINAL_REPORT_PATH, content.encode("utf-8"))])
+            reservation = self.state_budget.reserve([(FINAL_REPORT_PATH, encoded)])
+        except ValueError:
+            return self._tool_error(
+                tool_call,
+                "writer_output_limit_exceeded",
+                "report would exceed the shared-state resource limit",
+            )
+        try:
+            responses = await self.backend.aupload_files([(FINAL_REPORT_PATH, encoded)])
         except Exception as exc:  # noqa: BLE001 - return a stable, sanitized tool error
+            self.state_budget.rollback(reservation)
             logger.warning("Writer final-report commit failed (%s)", type(exc).__name__)
             return self._tool_error(tool_call, "writer_output_commit_failed", "the backend rejected the write")
         if not isinstance(responses, list) or len(responses) != 1 or self._response_error(responses[0]):
+            self.state_budget.rollback(reservation)
             logger.warning("Writer final-report commit returned an unsuccessful upload response")
             return self._tool_error(tool_call, "writer_output_commit_failed", "the backend rejected the write")
         self.tracker.record(content)
@@ -346,36 +507,8 @@ class FinalReportCommitMiddleware(AgentMiddleware):
             status="success",
         )
 
-    async def _refresh_after_edit(self, tool_call: dict[str, object], result: object) -> object:
-        if _tool_result_failed(result):
-            return result
-        try:
-            responses = await self.backend.adownload_files([FINAL_REPORT_PATH])
-        except Exception as exc:  # noqa: BLE001 - return a stable, sanitized tool error
-            logger.warning("Writer final-report verification failed (%s)", type(exc).__name__)
-            return self._tool_error(
-                tool_call,
-                "writer_output_commit_failed",
-                "the edited report could not be verified",
-            )
-        response = responses[0] if isinstance(responses, list) and len(responses) == 1 else None
-        content = response.get("content") if isinstance(response, dict) else getattr(response, "content", None)
-        if response is None or self._response_error(response) or not isinstance(content, bytes):
-            logger.warning("Writer final-report verification returned an unsuccessful download response")
-            return self._tool_error(
-                tool_call,
-                "writer_output_commit_failed",
-                "the edited report could not be verified",
-            )
-        try:
-            text = content.decode("utf-8")
-        except UnicodeDecodeError:
-            return self._tool_error(tool_call, "writer_output_commit_failed", "the edited report is not UTF-8")
-        self.tracker.record(text)
-        return result
-
     async def awrap_tool_call(self, request, handler):
-        """Upsert writer output and track successful writes or edits only."""
+        """Upsert bounded writer output; edits are rejected before mutation."""
         tool_call = request.tool_call if isinstance(getattr(request, "tool_call", None), dict) else {}
         tool_name = tool_call.get("name")
         if tool_name not in {"write_file", "edit_file"}:
@@ -393,12 +526,11 @@ class FinalReportCommitMiddleware(AgentMiddleware):
         async with self._mutation_lock:
             if tool_name == "write_file":
                 return await self._commit_write(tool_call)
-            try:
-                result = await handler(request)
-            except Exception as exc:  # noqa: BLE001 - return a stable, sanitized tool error
-                logger.warning("Writer final-report edit failed (%s)", type(exc).__name__)
-                return self._tool_error(tool_call, "writer_output_commit_failed", "the backend rejected the edit")
-            return await self._refresh_after_edit(tool_call, result)
+            return self._tool_error(
+                tool_call,
+                "writer_output_edit_not_supported",
+                f"use write_file with file_path={FINAL_REPORT_PATH} and the complete bounded report",
+            )
 
 
 class RequiredOutputFileMiddleware(AgentMiddleware):
@@ -444,7 +576,11 @@ class RequiredOutputFileMiddleware(AgentMiddleware):
         return self.tracker.committed_text(files, paths=self.paths) is not None
 
     def _retry_count(self, messages: list[object]) -> int:
-        return sum(isinstance(message, HumanMessage) and message.content == self._retry_message for message in messages)
+        return sum(
+            isinstance(message, HumanMessage)
+            and message.additional_kwargs.get(_GENERATED_RETRY_MARKER) == "required_output_file"
+            for message in messages
+        )
 
     def _check_after_model(self, state: object) -> dict[str, object] | None:
         messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
@@ -464,7 +600,12 @@ class RequiredOutputFileMiddleware(AgentMiddleware):
 
         logger.warning("Agent reported completion before committing the required output; requesting corrective turn")
         return {
-            "messages": [HumanMessage(content=self._retry_message)],
+            "messages": [
+                HumanMessage(
+                    content=self._retry_message,
+                    additional_kwargs={_GENERATED_RETRY_MARKER: "required_output_file"},
+                )
+            ],
             "jump_to": "model",
         }
 
@@ -476,6 +617,77 @@ class RequiredOutputFileMiddleware(AgentMiddleware):
     @hook_config(can_jump_to=["model"])
     async def aafter_model(self, state, runtime):
         """Verify asynchronous writer completion and request one local repair when needed."""
+        return self._check_after_model(state)
+
+
+class RequiredWriterDelegationMiddleware(AgentMiddleware):
+    """Prevent the orchestrator from terminating before writer-owned publication.
+
+    Source failures can make an orchestrator conclude that no further research
+    is useful and return ordinary assistant text without ever delegating to the
+    writer. Give it one bounded corrective turn that forbids more research and
+    requires writer delegation. The writer's existing commit middleware remains
+    the only component allowed to publish the final report.
+    """
+
+    def __init__(
+        self,
+        *,
+        tracker: FinalReportCommitTracker,
+        max_retries: int = 1,
+        reason_code: str = "writer_output_not_committed",
+    ) -> None:
+        if max_retries < 0:
+            raise ValueError("max_retries must be non-negative")
+        self.tracker = tracker
+        self.max_retries = max_retries
+        self.reason_code = reason_code
+        self._retry_message = (
+            "The run cannot finish because writer-agent has not committed /shared/output.md. "
+            "Do not perform or retry source research. Delegate to writer-agent now using the Writer Delegation "
+            "Template and the plan, research notes, verified sources, and explicit evidence gaps already available. "
+            "After writer-agent returns, return only its completion marker."
+        )
+
+    def _retry_count(self, messages: list[object]) -> int:
+        return sum(
+            isinstance(message, HumanMessage)
+            and message.additional_kwargs.get(_GENERATED_RETRY_MARKER) == "required_writer_delegation"
+            for message in messages
+        )
+
+    def _check_after_model(self, state: object) -> dict[str, object] | None:
+        messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
+        files = state.get("files", {}) if isinstance(state, dict) else getattr(state, "files", {})
+        if not isinstance(messages, list) or not messages:
+            return None
+        last_message = messages[-1]
+        if not isinstance(last_message, AIMessage) or last_message.tool_calls:
+            return None
+        if self.tracker.committed_text(files, paths=FINAL_REPORT_STATE_PATHS) is not None:
+            return None
+        if self._retry_count(messages) >= self.max_retries:
+            raise RuntimeError(self.reason_code)
+
+        logger.warning("Orchestrator ended before writer delegation; requesting one corrective turn")
+        return {
+            "messages": [
+                HumanMessage(
+                    content=self._retry_message,
+                    additional_kwargs={_GENERATED_RETRY_MARKER: "required_writer_delegation"},
+                )
+            ],
+            "jump_to": "model",
+        }
+
+    @hook_config(can_jump_to=["model"])
+    def after_model(self, state, runtime):
+        """Require a synchronous orchestrator to delegate writer publication."""
+        return self._check_after_model(state)
+
+    @hook_config(can_jump_to=["model"])
+    async def aafter_model(self, state, runtime):
+        """Require an asynchronous orchestrator to delegate writer publication."""
         return self._check_after_model(state)
 
 
@@ -511,21 +723,21 @@ class ToolNameSanitizationMiddleware(AgentMiddleware):
         if "<|channel|>" in name:
             candidate = name.split("<|channel|>", maxsplit=1)[0]
             if candidate in self.valid_tool_names:
-                logger.info("Sanitized tool name: '%s' -> '%s'", name, candidate)
+                logger.info("Sanitized tool name (original_%s) -> '%s'", log_content_metadata(name), candidate)
                 return candidate
 
         # 2. Strip dot suffix if base name is valid
         if "." in name:
             candidate = name.split(".", maxsplit=1)[0]
             if candidate in self.valid_tool_names:
-                logger.info("Sanitized tool name: '%s' -> '%s'", name, candidate)
+                logger.info("Sanitized tool name (original_%s) -> '%s'", log_content_metadata(name), candidate)
                 return candidate
 
         # 3. Map common hallucinated names
         if name in _TOOL_NAME_ALIASES:
             mapped = _TOOL_NAME_ALIASES[name]
             if mapped in self.valid_tool_names:
-                logger.info("Mapped tool name: '%s' -> '%s'", name, mapped)
+                logger.info("Mapped tool name (original_%s) -> '%s'", log_content_metadata(name), mapped)
                 return mapped
 
         return name
@@ -646,6 +858,72 @@ class TodoSuppressionMiddleware(AgentMiddleware):
         return await handler(self._clean_request(request))
 
 
+class TodoQuotaMiddleware(AgentMiddleware):
+    """Reject oversized top-level todo replacements before they mutate graph state."""
+
+    _TODO_TOOL = "write_todos"
+
+    def __init__(self, *, resource_limits: DeepResearchResourceLimits | None = None) -> None:
+        """Configure the hard job-local todo count and content ceilings."""
+        self.resource_limits = resource_limits or DeepResearchResourceLimits()
+
+    def _validate(self, request: object) -> None:
+        """Validate raw write_todos arguments before delegating to the framework tool."""
+        tool_call = getattr(request, "tool_call", {})
+        if not isinstance(tool_call, dict) or tool_call.get("name") != self._TODO_TOOL:
+            return
+        args = tool_call.get("args", {})
+        todos = args.get("todos") if isinstance(args, dict) else None
+        if not isinstance(todos, list):
+            raise ValueError("write_todos requires a todos list")
+        if len(todos) > self.resource_limits.max_todo_items:
+            raise ValueError(f"write_todos exceeds the {self.resource_limits.max_todo_items}-item limit")
+
+        total_chars = 0
+        for todo in todos:
+            content = todo.get("content") if isinstance(todo, dict) else None
+            if not isinstance(content, str):
+                raise ValueError("write_todos item content must be a string")
+            if len(content) > self.resource_limits.max_todo_item_chars:
+                raise ValueError(
+                    f"write_todos item exceeds the {self.resource_limits.max_todo_item_chars}-character limit"
+                )
+            total_chars += len(content)
+        if total_chars > self.resource_limits.max_total_todo_chars:
+            raise ValueError(
+                f"write_todos exceeds the {self.resource_limits.max_total_todo_chars}-character aggregate content limit"
+            )
+
+    @staticmethod
+    def _tool_error(request: object, error: ValueError) -> ToolMessage:
+        """Return a recoverable tool error for a rejected todo replacement."""
+        tool_call = getattr(request, "tool_call", {})
+        if not isinstance(tool_call, dict):
+            tool_call = {}
+        return ToolMessage(
+            content=f"write_todos_quota_rejected: {error}",
+            tool_call_id=tool_call.get("id", "todo-quota"),
+            name=tool_call.get("name", TodoQuotaMiddleware._TODO_TOOL),
+            status="error",
+        )
+
+    def wrap_tool_call(self, request, handler):
+        """Validate a synchronous todo update before graph-state mutation."""
+        try:
+            self._validate(request)
+        except ValueError as exc:
+            return self._tool_error(request, exc)
+        return handler(request)
+
+    async def awrap_tool_call(self, request, handler):
+        """Validate an asynchronous todo update before graph-state mutation."""
+        try:
+            self._validate(request)
+        except ValueError as exc:
+            return self._tool_error(request, exc)
+        return await handler(request)
+
+
 class ToolRetryMiddleware(AgentMiddleware):
     """Retries failed tool calls with exponential backoff.
 
@@ -677,11 +955,12 @@ class ToolRetryMiddleware(AgentMiddleware):
                 if attempt < self.max_retries:
                     tool_name = request.tool_call.get("name", "?") if hasattr(request, "tool_call") else "?"
                     logger.warning(
-                        "Tool %s failed (attempt %d/%d): %s",
-                        tool_name,
+                        "Tool call failed (tool_%s, attempt %d/%d, error_type=%s, detail_%s)",
+                        log_content_metadata(tool_name),
                         attempt + 1,
                         self.max_retries + 1,
-                        e,
+                        type(e).__name__,
+                        log_content_metadata(e),
                     )
                     await asyncio.sleep(delay)
                     delay *= self.backoff_factor
@@ -789,18 +1068,25 @@ class SourceRegistryMiddleware(AgentMiddleware):
                 tool_name = request.tool_call.get("name", "")
             if tool_name not in self._source_tool_names:
                 return result
+            content = str(result.content)
+            if is_non_citable_status_output(content):
+                return result
             source_id = get_source_id_for_tool(tool_name)
-            sources = extract_sources_from_tool_result(tool_name, str(result.content), source_id=source_id)
+            sources = extract_sources_from_tool_result(
+                tool_name,
+                content,
+                source_id=source_id,
+                result_status=getattr(result, "status", None),
+            )
             async with self._lock:
                 active_registry = self.active_registry()
                 for source in sources:
                     active_registry.add(source)
             if sources:
                 logger.info(
-                    "[CitationRegistry] Captured %d source(s) from %s: %s",
+                    "[CitationRegistry] Captured %d source(s) from %s",
                     len(sources),
                     tool_name,
-                    [s.url or s.citation_key for s in sources],
                 )
         return result
 
@@ -915,6 +1201,73 @@ class ArtifactHarvestMiddleware(AgentMiddleware):
         return result.model_copy(update={"content": content})
 
 
+class SourceRoutingPersistenceMiddleware(AgentMiddleware):
+    """Persist the source router's schema-validated response to shared state."""
+
+    def __init__(
+        self,
+        backend: object,
+        *,
+        state_budget: StateBudgetLedger | None = None,
+        resource_limits: DeepResearchResourceLimits | None = None,
+        path: str = _SOURCE_ROUTING_PATH,
+    ) -> None:
+        self.backend = backend
+        self.resource_limits = resource_limits or DeepResearchResourceLimits()
+        self.state_budget = state_budget or StateBudgetLedger(
+            limits=self.resource_limits,
+            files={},
+            sandbox_enabled=True,
+        )
+        self.path = path
+
+    @staticmethod
+    def _routing_from_state(state: object) -> object:
+        if isinstance(state, dict):
+            return state.get("structured_response")
+        return getattr(state, "structured_response", None)
+
+    def _persist_routing(self, routing: object) -> None:
+        if routing is None:
+            return
+        if hasattr(routing, "model_dump"):
+            payload = routing.model_dump(mode="json", exclude_none=True)
+        elif isinstance(routing, dict):
+            payload = routing
+        else:
+            return
+
+        content = json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8")
+        if len(content) > self.resource_limits.max_source_routing_bytes:
+            raise ValueError(
+                f"Source routing exceeds the {self.resource_limits.max_source_routing_bytes}-byte serialized size limit"
+            )
+        reservation = self.state_budget.reserve([(self.path, content)])
+        try:
+            responses = self.backend.upload_files([(self.path, content)])
+        except Exception:
+            self.state_budget.rollback(reservation)
+            raise
+        errors = [f"{response.path}: {response.error}" for response in responses if getattr(response, "error", None)]
+        if errors:
+            self.state_budget.rollback(reservation)
+            logger.error(
+                "Failed to persist source routing to %s (error_count=%d detail_%s)",
+                self.path,
+                len(errors),
+                log_content_metadata("; ".join(errors)),
+            )
+            raise RuntimeError(f"Failed to persist source routing to {self.path}")
+
+    def after_agent(self, state, runtime):
+        """Persist source routing after a synchronous source-router run."""
+        self._persist_routing(self._routing_from_state(state))
+
+    async def aafter_agent(self, state, runtime):
+        """Persist source routing after an asynchronous source-router run."""
+        await asyncio.to_thread(self._persist_routing, self._routing_from_state(state))
+
+
 class PlanPersistenceMiddleware(AgentMiddleware):
     """Persists the planner's structured ResearchPlan to the shared filesystem.
 
@@ -931,14 +1284,28 @@ class PlanPersistenceMiddleware(AgentMiddleware):
     orchestrator reads a missing or stale ``/shared/plan.json``.
     """
 
-    def __init__(self, backend: object, *, path: str = "/shared/plan.json") -> None:
+    def __init__(
+        self,
+        backend: object,
+        *,
+        state_budget: StateBudgetLedger | None = None,
+        resource_limits: DeepResearchResourceLimits | None = None,
+        path: str = "/shared/plan.json",
+    ) -> None:
         """Initialize the middleware.
 
         Args:
             backend: Shared filesystem backend exposing ``upload_files``.
+            resource_limits: Hard plan/query limits enforced before state mutation.
             path: Shared path the serialized plan is written to.
         """
         self.backend = backend
+        self.resource_limits = resource_limits or DeepResearchResourceLimits()
+        self.state_budget = state_budget or StateBudgetLedger(
+            limits=self.resource_limits,
+            files={},
+            sandbox_enabled=True,
+        )
         self.path = path
 
     @staticmethod
@@ -958,13 +1325,52 @@ class PlanPersistenceMiddleware(AgentMiddleware):
             payload = plan
         else:
             return
+
+        queries = payload.get("queries", [])
+        if not isinstance(queries, list):
+            raise ValueError("Research plan queries must be a list")
+        if len(queries) > self.resource_limits.max_research_queries:
+            raise ValueError(f"Research plan exceeds the {self.resource_limits.max_research_queries}-query job limit")
+        query_chars = 0
+        for query in queries:
+            if not isinstance(query, dict):
+                raise ValueError("Research plan contains an invalid query")
+            query_text = query.get("query")
+            if not isinstance(query_text, str) or not query_text:
+                raise ValueError("Research plan contains an invalid query")
+            query_chars += len(query_text)
+            subqueries = query.get("subqueries", [])
+            if not isinstance(subqueries, list) or any(
+                not isinstance(subquery, str) or not subquery for subquery in subqueries
+            ):
+                raise ValueError("Research plan contains invalid subqueries")
+            query_chars += sum(len(subquery) for subquery in subqueries)
+        if query_chars > self.resource_limits.max_total_query_chars:
+            raise ValueError(
+                "Research plan exceeds the "
+                f"{self.resource_limits.max_total_query_chars}-character aggregate query limit"
+            )
+
         content = json.dumps(payload, indent=2, ensure_ascii=False).encode("utf-8")
-        responses = self.backend.upload_files([(self.path, content)])
+        if len(content) > self.resource_limits.max_plan_bytes:
+            raise ValueError(
+                f"Research plan exceeds the {self.resource_limits.max_plan_bytes}-byte serialized size limit"
+            )
+        reservation = self.state_budget.reserve([(self.path, content)])
+        try:
+            responses = self.backend.upload_files([(self.path, content)])
+        except Exception:
+            self.state_budget.rollback(reservation)
+            raise
         errors = [f"{response.path}: {response.error}" for response in responses if getattr(response, "error", None)]
         if errors:
-            # Raw backend detail stays in logs; the raised error reaches the job status /
-            # caller, so it must not echo backend-internal strings (hostnames, paths, etc.).
-            logger.error("Failed to persist plan to %s: %s", self.path, "; ".join(errors))
+            self.state_budget.rollback(reservation)
+            logger.error(
+                "Failed to persist plan to %s (error_count=%d detail_%s)",
+                self.path,
+                len(errors),
+                log_content_metadata("; ".join(errors)),
+            )
             raise RuntimeError(f"Failed to persist the research plan to {self.path}")
 
     def after_agent(self, state, runtime):

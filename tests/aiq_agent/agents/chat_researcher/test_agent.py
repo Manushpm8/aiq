@@ -30,6 +30,7 @@ from aiq_agent.agents.chat_researcher.models import IntentResult
 from aiq_agent.agents.chat_researcher.models import WorkflowFailure
 from aiq_agent.common.citation_verification import EmptySourceRegistryError
 from aiq_agent.common.citation_verification import EmptySourceRegistryReason
+from aiq_agent.common.logging_utils import log_content_metadata
 from aiq_agent.common.logging_utils import log_identifier_ref
 
 
@@ -216,6 +217,34 @@ class TestChatResearcherAgent:
 
         assert result is not None
         assert result.get("workflow_outcome") is None
+
+    @pytest.mark.asyncio
+    async def test_run_logs_query_metadata_without_customer_content(
+        self,
+        mock_intent_classifier,
+        mock_shallow_research,
+        mock_deep_research,
+        mock_clarifier,
+        caplog,
+    ):
+        secret_query = "research CUDA using nvapi-vdr-fake-secret-do-not-log"  # pragma: allowlist secret
+        caplog.set_level(logging.INFO, logger="aiq_agent.agents.chat_researcher.agent")
+        agent = ChatResearcherAgent(
+            intent_classifier_fn=mock_intent_classifier,
+            shallow_research_fn=mock_shallow_research,
+            deep_research_fn=mock_deep_research,
+            clarifier_fn=mock_clarifier,
+            enable_escalation=False,
+        )
+
+        await agent.run(
+            ChatResearcherState(messages=[HumanMessage(content=secret_query)]),
+            thread_id="test-safe-logging",
+        )
+
+        assert secret_query not in caplog.text
+        assert "nvapi-vdr-fake-secret-do-not-log" not in caplog.text
+        assert log_content_metadata(secret_query) in caplog.text
 
     @pytest.mark.asyncio
     async def test_shallow_research_failure_sets_terminal_outcome(
@@ -532,6 +561,39 @@ class TestChatResearcherAgent:
             "kind": "deep_research",
             "job_id": "deep-job-1",
         }
+
+    @pytest.mark.asyncio
+    async def test_run_deep_research_submitter_surfaces_safe_admission_failure(
+        self,
+        mock_shallow_research,
+        mock_deep_research,
+        mock_clarifier,
+    ):
+        from aiq_api.jobs.admission import JobPrincipalCapacityExceededError
+
+        async def deep_orchestration(state):
+            return {
+                "user_intent": IntentResult(intent="research", raw=None),
+                "depth_decision": DepthDecision(decision="deep", raw_reasoning="Complex"),
+            }
+
+        async def reject_submit(_state):
+            raise JobPrincipalCapacityExceededError
+
+        agent = ChatResearcherAgent(
+            intent_classifier_fn=deep_orchestration,
+            shallow_research_fn=mock_shallow_research,
+            deep_research_fn=mock_deep_research,
+            clarifier_fn=mock_clarifier,
+            enable_clarifier=False,
+            deep_research_job_submitter=reject_submit,
+        )
+
+        state = ChatResearcherState(messages=[HumanMessage(content="Compare CUDA vs OpenCL")])
+        result = await agent.run(state, thread_id="test-thread-admission-failure")
+
+        assert result["messages"][-1].content == JobPrincipalCapacityExceededError.public_message
+        assert result["workflow_outcome"] == WorkflowFailure(error=RESEARCH_WORKFLOW_FAILURE_ERROR)
 
     @pytest.mark.asyncio
     async def test_deep_research_seeds_parent_report_for_inline_delta(

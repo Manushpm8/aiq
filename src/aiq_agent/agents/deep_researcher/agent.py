@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import Callable
 from collections.abc import Sequence
 from pathlib import Path
@@ -31,11 +30,13 @@ from langchain_core.tools import BaseTool
 from aiq_agent.common import LLMProvider
 from aiq_agent.common import load_prompt
 from aiq_agent.common import validate_research_source_configuration
+from aiq_agent.common.citation_verification import CitationIntegrityError
 from aiq_agent.common.citation_verification import EmptySourceRegistryError
 from aiq_agent.common.citation_verification import EmptySourceRegistryReason
 from aiq_agent.common.citation_verification import sanitize_report
 from aiq_agent.common.citation_verification import source_entries_from_parent_context
 from aiq_agent.common.citation_verification import verify_citations
+from aiq_agent.common.logging_utils import log_content_metadata
 
 from .custom_middleware import FinalReportCommitTracker
 from .custom_middleware import SourceRegistryMiddleware
@@ -46,8 +47,13 @@ from .factory import build_deep_research_graph
 from .factory import build_deep_research_middleware_set
 from .factory import build_deep_research_tool_set
 from .models import DeepResearchAgentState
+from .resource_limits import DeepResearchExecutionTimeout
+from .resource_limits import DeepResearchResourceLimits
+from .resource_limits import StateBudgetLedger
 from .tools.source_tool_batching import DEFAULT_MAX_CONCURRENT_SOURCE_TOOL_CALLS
 from .tools.source_tool_batching import DEFAULT_MAX_SOURCE_TOOL_BATCH_SIZE
+from .tools.source_tool_batching import activate_source_tool_budget
+from .tools.source_tool_batching import reset_source_tool_budget
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +87,7 @@ class DeepResearcherAgent:
         max_research_concurrency: int = DEFAULT_MAX_RESEARCH_CONCURRENCY,
         max_concurrent_source_tool_calls: int = DEFAULT_MAX_CONCURRENT_SOURCE_TOOL_CALLS,
         max_source_tool_batch_size: int = DEFAULT_MAX_SOURCE_TOOL_BATCH_SIZE,
+        resource_limits: DeepResearchResourceLimits | None = None,
     ) -> None:
         """
         Initialize the deep researcher agent.
@@ -100,6 +107,7 @@ class DeepResearcherAgent:
                 run_research_batch call.
             max_concurrent_source_tool_calls: Shared source-tool concurrency limit across researcher workers.
             max_source_tool_batch_size: Maximum concrete inputs per batch-capable source tool call.
+            resource_limits: Hard per-job request, state, source-call, and wall-clock limits.
         """
         self.llm_provider = llm_provider
         self.tools = list(tools) if tools else []
@@ -108,6 +116,7 @@ class DeepResearcherAgent:
         self.max_research_concurrency = max_research_concurrency
         self.max_concurrent_source_tool_calls = max_concurrent_source_tool_calls
         self.max_source_tool_batch_size = max_source_tool_batch_size
+        self.resource_limits = resource_limits or DeepResearchResourceLimits()
         self.domain_catalog_path = domain_catalog_path
         self.enable_source_router = enable_source_router
         self.enable_citation_verification = enable_citation_verification
@@ -181,6 +190,7 @@ class DeepResearcherAgent:
         state: DeepResearchAgentState,
         *,
         final_report_tracker: FinalReportCommitTracker,
+        state_budget: StateBudgetLedger | None = None,
     ) -> Any:
         """Build the orchestrator graph for the current state."""
         return build_deep_research_graph(
@@ -196,7 +206,9 @@ class DeepResearcherAgent:
             domain_catalog_path=self.domain_catalog_path,
             enable_source_router=self.enable_source_router,
             max_research_concurrency=self.max_research_concurrency,
+            resource_limits=self.resource_limits,
             final_report_tracker=final_report_tracker,
+            state_budget=state_budget,
         )
 
     def _extract_final_markdown(
@@ -255,24 +267,64 @@ class DeepResearcherAgent:
         # selection and availability must be enforced here rather than by either adapter.
         validate_research_source_configuration(state.data_sources, "deep research", self.tools)
 
-        prepared_files = self.deepagents_runtime.prepare_state_files(dict(state.files))
-        if prepared_files != state.files:
-            state = state.model_copy(update={"files": prepared_files})
-        self._seed_parent_sources(state.files)
-        final_report_tracker = FinalReportCommitTracker()
-        agent = self._build_orchestrator_agent(state, final_report_tracker=final_report_tracker)
-
         messages = state.messages
+        query = ""
         if messages:
             query_content = messages[-1].content
             query = query_content if isinstance(query_content, str) else str(query_content)
+        clarifier_result = state.clarifier_result or ""
+        request_context_chars = len(query) + len(clarifier_result)
+        if request_context_chars > self.resource_limits.max_input_chars:
+            raise ValueError(
+                "Deep-research query and clarification context exceeds the "
+                f"{self.resource_limits.max_input_chars}-character limit"
+            )
+
+        prepared_files = self.deepagents_runtime.prepare_state_files(dict(state.files))
+        if prepared_files != state.files:
+            state = state.model_copy(update={"files": prepared_files})
+        state_budget = StateBudgetLedger(
+            limits=self.resource_limits,
+            files=dict(state.files),
+            sandbox_enabled=self.deepagents_runtime.execution_enabled,
+        )
+        self._seed_parent_sources(state.files)
+        final_report_tracker = FinalReportCommitTracker()
+        agent = self._build_orchestrator_agent(
+            state,
+            final_report_tracker=final_report_tracker,
+            state_budget=state_budget,
+        )
+
+        if messages:
             logger.info("=" * 80)
             logger.info("Deep Research Subagent: Starting workflow")
-            logger.info("Query: %s...", query[:100])
+            logger.info("Query: %s", log_content_metadata(query))
             logger.info("=" * 80)
 
+        budget_token = activate_source_tool_budget(
+            self.resource_limits.max_source_tool_calls,
+            max_consecutive_failures=self.resource_limits.max_consecutive_source_tool_failures,
+        )
         try:
-            result = await agent.ainvoke(state, config={"callbacks": self.callbacks} if self.callbacks else None)
+            execution_timeout = asyncio.timeout(self.resource_limits.max_execution_seconds)
+            try:
+                async with execution_timeout:
+                    result = await agent.ainvoke(
+                        state,
+                        config={"callbacks": self.callbacks} if self.callbacks else None,
+                    )
+            except TimeoutError as exc:
+                # An inner provider/tool may raise TimeoutError for its own operation.
+                # Only the asyncio.timeout context's deadline is a job-level resource
+                # timeout that requires forcible sandbox teardown.
+                if execution_timeout.expired():
+                    raise DeepResearchExecutionTimeout("Deep-research execution time limit exceeded") from exc
+                raise
+            if execution_timeout.expired():
+                # A coroutine can suppress its cancellation. The job still crossed
+                # the hard wall-clock boundary and must not be treated as successful.
+                raise DeepResearchExecutionTimeout("Deep-research execution time limit exceeded")
 
             final_message = self._extract_final_markdown(
                 result,
@@ -304,6 +356,7 @@ class DeepResearcherAgent:
                 raise RuntimeError("writer_output_not_committed")
 
             # Post-process: verify citations against source registry
+            citation_registry = None
             if self.enable_citation_verification and self.source_registry_middleware.has_sources():
                 registry = self.source_registry_middleware.active_registry()
                 verification = verify_citations(
@@ -312,23 +365,12 @@ class DeepResearcherAgent:
                     reference_sources=self.source_registry_middleware.get_source_entries(mode="compact"),
                 )
                 if verification.removed_citations:
-                    removed_details = []
-                    for c in verification.removed_citations:
-                        url_match = re.search(r"https?://\S+", c.get("line", ""))
-                        url_str = url_match.group(0).rstrip(".,;)") if url_match else "(no url)"
-                        removed_details.append(f"[{c['number']}] {c['reason']}: {url_str}")
                     logger.info(
-                        "Citation verification removed %d invalid citation(s):\n  %s",
+                        "Citation verification removed %d invalid citation(s)",
                         len(verification.removed_citations),
-                        "\n  ".join(removed_details),
                     )
                 final_message = verification.verified_report
-                if not verification.valid_citations:
-                    logger.warning(
-                        "Citation verification found no valid citations in writer-agent output; "
-                        "returning the generated report without failing the job. "
-                        "This may indicate unsupported citation formatting or over-aggressive verification."
-                    )
+                citation_registry = registry
             # Post-process: sanitize report (strip body URLs, shortened URLs, unsafe URLs)
             sanitization = sanitize_report(final_message)
             final_message = sanitization.sanitized_report
@@ -354,11 +396,23 @@ class DeepResearcherAgent:
                         exc_info=True,
                     )
 
+            final_cited_urls: list[str] | None = None
+            if citation_registry is not None:
+                final_verification = verify_citations(final_message, citation_registry)
+                if not final_verification.valid_citations:
+                    raise CitationIntegrityError()
+                final_message = final_verification.verified_report
+                final_cited_urls = list(
+                    dict.fromkeys(
+                        citation["url"] for citation in final_verification.valid_citations if citation.get("url")
+                    )
+                )
+
             # Re-emit the verified/sanitized report so the frontend overwrites
             # the raw version that on_llm_end auto-emitted during ainvoke().
             for cb in self.callbacks:
                 if hasattr(cb, "emit_final_report"):
-                    cb.emit_final_report(final_message)
+                    cb.emit_final_report(final_message, cited_urls=final_cited_urls)
                     break
 
             self._replace_last_message_content(result, final_message)
@@ -371,8 +425,18 @@ class DeepResearcherAgent:
 
         except EmptySourceRegistryError as ex:
             if ex.reason is not EmptySourceRegistryReason.NO_SOURCE_RESULTS:
-                logger.error("Deep Research Subagent failed: %s", ex, exc_info=True)
+                logger.error(
+                    "Deep Research Subagent failed (error_type=%s detail_%s)",
+                    type(ex).__name__,
+                    log_content_metadata(ex),
+                )
             raise
         except Exception as ex:
-            logger.error("Deep Research Subagent failed: %s", ex, exc_info=True)
+            logger.error(
+                "Deep Research Subagent failed (error_type=%s detail_%s)",
+                type(ex).__name__,
+                log_content_metadata(ex),
+            )
             raise
+        finally:
+            reset_source_tool_budget(budget_token)

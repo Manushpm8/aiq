@@ -40,6 +40,7 @@ from typing import Any
 
 from fastapi import Body
 from fastapi import FastAPI
+from fastapi import Header
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
@@ -501,6 +502,8 @@ async def register_job_routes(app: FastAPI, builder: WorkflowBuilder, worker: Fa
 
     from ..jobs.access import authorize_job_access
     from ..jobs.access import ensure_job_access_table
+    from ..jobs.admission import JobAdmissionError
+    from ..jobs.admission import ensure_deep_research_admission_table
     from ..jobs.crypto import ContentEncryptionConfigError
     from ..jobs.crypto import ContentEncryptionInvalidData
     from ..jobs.crypto import ContentEncryptionUnavailable
@@ -685,6 +688,7 @@ async def register_job_routes(app: FastAPI, builder: WorkflowBuilder, worker: Fa
     )
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, ensure_job_access_table, db_url)
+    await loop.run_in_executor(None, ensure_deep_research_admission_table, db_url)
     await loop.run_in_executor(None, _validate_artifact_store, db_url)
 
     @app.post(
@@ -697,12 +701,14 @@ async def register_job_routes(app: FastAPI, builder: WorkflowBuilder, worker: Fa
         ),
         responses={
             400: {"description": "Unknown, internal-only, or unconfigured agent type, or invalid request"},
+            413: {"description": "Deep-research input exceeds the configured payload limit"},
             409: {
                 "description": (
                     "A custom job_id was supplied that collides with an existing job, or a selected "
                     "protected data source requires per-user OAuth connection"
                 )
             },
+            429: {"description": "Per-principal active-job or submission-rate limit reached"},
             422: {"description": "One or more unknown or agent-unavailable data source IDs"},
             500: {
                 "description": (
@@ -710,11 +716,16 @@ async def register_job_routes(app: FastAPI, builder: WorkflowBuilder, worker: Fa
                     "or agent/tool configuration lookup failed unexpectedly"
                 )
             },
-            503: {"description": "Content encryption, Dask scheduler, or sandbox capacity is unavailable"},
+            503: {
+                "description": (
+                    "Content encryption, Dask scheduler, admission database, or deployment job capacity is unavailable"
+                )
+            },
         },
     )
     async def submit_job(
         req: Annotated[JobSubmitRequest, Body(openapi_examples=JOB_SUBMIT_EXAMPLES)],
+        conversation_id: Annotated[str | None, Header(alias="conversation-id")] = None,
     ) -> JobStatusResponse:
         """Submit a new async job for deep research or other registered agents."""
         try:
@@ -798,6 +809,7 @@ async def register_job_routes(app: FastAPI, builder: WorkflowBuilder, worker: Fa
                 expiry_seconds=expiry,
                 data_sources=req.data_sources,
                 auth_token=auth_token,
+                conversation_id=conversation_id,
                 skip_encryption_readiness_check=True,
             )
         except ContentEncryptionUnavailable as e:
@@ -814,6 +826,9 @@ async def register_job_routes(app: FastAPI, builder: WorkflowBuilder, worker: Fa
             raise HTTPException(500, "Content encryption configuration is invalid")
         except JobIdConflictError:
             raise HTTPException(409, f"Job already exists: {req.job_id}")
+        except JobAdmissionError as e:
+            headers = {"Retry-After": str(e.retry_after_seconds)} if e.retry_after_seconds is not None else None
+            raise HTTPException(status_code=e.status_code, detail=e.public_message, headers=headers)
         except McpAuthRequiredError as e:
             # submit_agent_job runs the same MCP preflight and raises if a selected
             # protected source became disconnected between the route preflight above
@@ -1663,6 +1678,13 @@ def _process_artifact_update(
         url = data.get("url") or content
         if _is_valid_url(url):
             sources_cited.add(_normalize_url(url))
+    elif artifact_type == "output" and data.get("output_category") == "final_report":
+        final_cited_urls = data.get("cited_urls")
+        if isinstance(final_cited_urls, list):
+            # The verified final report is authoritative. Intermediate LLM
+            # output can contain citations that finalization later removes.
+            sources_cited.clear()
+            sources_cited.update(_normalize_url(url) for url in final_cited_urls if _is_valid_url(url))
 
     if content:
         outputs.append(

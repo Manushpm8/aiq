@@ -38,6 +38,7 @@ from langgraph.prebuilt import tools_condition
 from aiq_agent.common import get_source_id_for_tool
 from aiq_agent.common import load_prompt
 from aiq_agent.common import render_prompt_template
+from aiq_agent.common.callbacks import SUPPRESS_OUTPUT_ARTIFACT_TAG
 from aiq_agent.common.citation_verification import EmptySourceRegistryError
 from aiq_agent.common.citation_verification import SourceEntry
 from aiq_agent.common.citation_verification import SourceRegistry
@@ -45,6 +46,7 @@ from aiq_agent.common.citation_verification import extract_sources_from_tool_res
 from aiq_agent.common.citation_verification import get_session_registry
 from aiq_agent.common.citation_verification import sanitize_report
 from aiq_agent.common.citation_verification import verify_citations
+from aiq_agent.common.logging_utils import log_content_metadata
 
 from ...common import LLMProvider
 from ...common import LLMRole
@@ -189,6 +191,8 @@ class ShallowResearcherAgent:
     def _build_graph(self) -> CompiledStateGraph:
         """Build the LangGraph StateGraph."""
 
+        source_tool_names = {tool.name for tool in self.tools}
+
         async def agent_node(state: ShallowResearchAgentState) -> dict[str, Any]:
             """Execute the agent with parallel call tracking and context anchoring."""
             messages = state.messages
@@ -216,16 +220,14 @@ class ShallowResearcherAgent:
                 current_datetime=current_datetime,
                 available_documents=[doc.model_dump() for doc in available_documents],
             )
-            # DEBUG: Log the system prompt (can be removed in production)
+            # Preserve prompt-shape diagnostics without writing customer or
+            # configuration content to logs.
             if os.environ.get("DEBUG_PROMPTS"):
-                logger.debug("Rendered system prompt:\n%s", rendered_system_prompt)
+                logger.debug("Rendered system prompt: %s", log_content_metadata(rendered_system_prompt))
 
             system_message = SystemMessage(content=rendered_system_prompt)
 
             processed_history = list(messages)
-
-            if os.environ.get("DEBUG_PROMPTS"):
-                logger.debug("Rendered system prompt:\n%s", rendered_system_prompt)
 
             try:
                 if iterations >= self.max_tool_iterations:
@@ -244,9 +246,31 @@ class ShallowResearcherAgent:
                     response = await self._get_llm().ainvoke(full_messages)
                     return {"messages": [response], "tool_iterations": iterations}
 
-                llm_with_tools = self._get_llm().bind_tools(self.tools, parallel_tool_calls=True)
+                llm = self._get_llm()
+                llm_with_tools = llm.bind_tools(self.tools) if self.tools else llm
                 full_messages = [system_message] + processed_history
-                response = await llm_with_tools.ainvoke(full_messages)
+                pre_evidence_config = {"tags": [SUPPRESS_OUTPUT_ARTIFACT_TAG]} if iterations == 0 else None
+                response = await llm_with_tools.ainvoke(full_messages, config=pre_evidence_config)
+
+                if self.tools and iterations == 0 and not getattr(response, "tool_calls", None):
+                    logger.warning("Shallow researcher returned an answer before collecting evidence; retrying once")
+                    tool_required = HumanMessage(
+                        content=(
+                            "Research is required before answering. Call exactly one available research tool now. "
+                            "Do not provide a final answer until the tool result is available."
+                        )
+                    )
+                    retry_llm = llm.bind_tools(self.tools, parallel_tool_calls=False)
+                    response = await retry_llm.ainvoke(
+                        full_messages + [response, tool_required],
+                        config=pre_evidence_config,
+                    )
+                    retry_tool_calls = getattr(response, "tool_calls", None) or []
+                    if len(retry_tool_calls) != 1 or retry_tool_calls[0].get("name") not in source_tool_names:
+                        raise RuntimeError(
+                            "shallow_research_tool_required: model did not call exactly one allowed research tool "
+                            "after one retry"
+                        )
 
                 new_iterations = iterations
                 if hasattr(response, "tool_calls") and response.tool_calls:
@@ -257,7 +281,11 @@ class ShallowResearcherAgent:
                 return {"messages": [response], "tool_iterations": new_iterations}
 
             except Exception as ex:
-                logger.error("Failed in agent_node: %s", ex)
+                logger.error(
+                    "Failed in agent_node (error_type=%s detail_%s)",
+                    type(ex).__name__,
+                    log_content_metadata(ex),
+                )
                 raise
 
         builder = StateGraph(ShallowResearchAgentState)
@@ -271,8 +299,6 @@ class ShallowResearcherAgent:
         # data_source_registry then decides which of those are configured
         # data sources. Having both gates keeps behavior consistent across
         # agents and safe even if the global registry is ever polluted.
-        source_tool_names = {t.name for t in self.tools}
-
         async def tool_node_with_source_capture(state: ShallowResearchAgentState) -> dict[str, Any]:
             """Execute tools and capture source URLs/citations for verification.
 
@@ -305,15 +331,19 @@ class ShallowResearcherAgent:
                             tool_name,
                         )
                         continue
-                    sources = extract_sources_from_tool_result(tool_name, str(msg.content), source_id=source_id)
+                    sources = extract_sources_from_tool_result(
+                        tool_name,
+                        str(msg.content),
+                        source_id=source_id,
+                        result_status=getattr(msg, "status", None),
+                    )
                     for source in sources:
                         active_registry.add(source)
                     if sources:
                         logger.info(
-                            "[CitationRegistry] Captured %d source(s) from %s: %s",
+                            "[CitationRegistry] Captured %d source(s) from %s",
                             len(sources),
                             tool_name,
-                            [s.url or s.citation_key for s in sources],
                         )
             return result
 
@@ -397,13 +427,20 @@ class ShallowResearcherAgent:
                 # Step 2: sanitize report (strip body URLs, shortened URLs, unsafe URLs)
                 sanitization = sanitize_report(content)
                 content = sanitization.sanitized_report
+                final_verification = verify_citations(content, registry)
+                content = final_verification.verified_report
+                final_cited_urls = list(
+                    dict.fromkeys(
+                        citation["url"] for citation in final_verification.valid_citations if citation.get("url")
+                    )
+                )
 
                 # Emit verified/sanitized report so the frontend shows the
                 # cleaned version (overwrites the raw draft auto-emitted
                 # during ainvoke).
                 for cb in self.callbacks:
                     if hasattr(cb, "emit_final_report"):
-                        cb.emit_final_report(content)
+                        cb.emit_final_report(content, cited_urls=final_cited_urls)
                         break
 
                 if hasattr(last_msg, "model_copy"):
