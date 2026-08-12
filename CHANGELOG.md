@@ -10,6 +10,7 @@ release; the candidate will be stabilized before the final `v2.2.0` release.
 - Routed deep research now uses explicit source-router, structured planner, concurrent researcher, and writer roles, with bounded source-tool batching and no research-plan approval step
 - Report follow-up supports answers over a completed report, child-job cosmetic rewrites, and delta research that carries the parent report forward as context
 - Clarification is more targeted: it can search for context before asking the user to narrow scope or choose an output shape
+- The writer produces figures through an on-demand `chart-generation` skill in the new `visualization` skill collection, rendering a sandbox PNG artifact when a sandbox is available and an inline chart spec otherwise; the skill ships enabled only in the skills and sandbox example configs (`config_domain_routing_and_skills`, `config_openshell`), while every other config presents chart-worthy data as a Markdown table, and a writer that wants inline charts must be assigned the `visualization` collection (charts are not sandbox-gated)
 
 **Sources and integrations**
 
