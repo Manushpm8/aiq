@@ -185,6 +185,7 @@ export const useLoadJobData = (): UseLoadJobDataReturn => {
   const setCurrentStatus = useChatStore((s) => s.setCurrentStatus)
   const setLoadedJobId = useChatStore((s) => s.setLoadedJobId)
   const setStreamLoaded = useChatStore((s) => s.setStreamLoaded)
+  const updateDeepResearchStatus = useChatStore((s) => s.updateDeepResearchStatus)
   const stopAllDeepResearchSpinners = useChatStore((s) => s.stopAllDeepResearchSpinners)
   const addErrorCard = useChatStore((s) => s.addErrorCard)
   const completeDeepResearch = useChatStore((s) => s.completeDeepResearch)
@@ -348,7 +349,10 @@ export const useLoadJobData = (): UseLoadJobDataReturn => {
 
         // Accumulation buffer — everything stays here until the stream ends
         const buffer = {
-          agents: new Map<string, { name: string; input?: string; output?: string }>(),
+          agents: new Map<
+            string,
+            { name: string; input?: string; output?: string; ended: boolean }
+          >(),
           llmSteps: new Map<
             string,
             {
@@ -392,9 +396,9 @@ export const useLoadJobData = (): UseLoadJobDataReturn => {
             name: a.name,
             input: a.input,
             output: a.output,
-            status: 'complete' as const,
+            status: a.ended ? ('complete' as const) : ('running' as const),
             startedAt: now,
-            completedAt: now,
+            ...(a.ended && { completedAt: now }),
           }))
 
           const llmSteps = Array.from(buffer.llmSteps.entries()).map(([id, s]) => ({
@@ -498,6 +502,7 @@ export const useLoadJobData = (): UseLoadJobDataReturn => {
                       ? input
                       : JSON.stringify(input)
                     : undefined,
+                  ended: false,
                 })
               }
             },
@@ -511,6 +516,7 @@ export const useLoadJobData = (): UseLoadJobDataReturn => {
                     ? output
                     : JSON.stringify(output)
                   : undefined
+                agent.ended = true
               }
             },
 
@@ -653,6 +659,7 @@ export const useLoadJobData = (): UseLoadJobDataReturn => {
         }
 
         clearDeepResearch()
+        updateDeepResearchStatus(jobStatus)
 
         if (shouldStreamFull) {
           await streamFullJob(jobId, scope)
@@ -713,6 +720,7 @@ export const useLoadJobData = (): UseLoadJobDataReturn => {
       streamFullJob,
       setLoadedJobId,
       setStreamLoaded,
+      updateDeepResearchStatus,
       stopAllDeepResearchSpinners,
       setResearchPanelTab,
       openRightPanel,
@@ -777,6 +785,7 @@ export const useLoadJobData = (): UseLoadJobDataReturn => {
         }
 
         clearDeepResearch()
+        updateDeepResearchStatus(jobStatus)
         await streamFullJob(jobId, scope)
         if (!isJobLoadScopeCurrent(scope)) return
         // Defensive cleanup: loaded data may have stale 'running' items.
@@ -824,6 +833,7 @@ export const useLoadJobData = (): UseLoadJobDataReturn => {
       stopAllDeepResearchSpinners,
       setStreamLoaded,
       setLoadedJobId,
+      updateDeepResearchStatus,
       syncMissingJobToFailureState,
       addErrorCard,
       completeDeepResearch,

@@ -208,7 +208,10 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
         idCounter: 0,
         activeLLMStack: [] as string[],
         activeToolStacks: new Map<string, string[]>(),
-        agents: new Map<string, { name: string; input?: string; output?: string }>(),
+        agents: new Map<
+          string,
+          { name: string; input?: string; output?: string; ended: boolean }
+        >(),
         llmSteps: new Map<string, { name: string; workflow?: string; content: string; thinking?: string; usage?: { input_tokens: number; output_tokens: number } }>(),
         toolCalls: new Map<string, { name: string; input?: Record<string, unknown>; output?: string; workflow?: string; agentId?: string; isSandbox?: boolean }>(),
         todos: null as TodoItem[] | null,
@@ -235,7 +238,15 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
         deactivateBuffer()
 
         const now = new Date()
-        const agents = Array.from(buf.agents.entries()).map(([id, a]) => ({ id, name: a.name, input: a.input, output: a.output, status: 'complete' as const, startedAt: now, completedAt: now }))
+        const agents = Array.from(buf.agents.entries()).map(([id, a]) => ({
+          id,
+          name: a.name,
+          input: a.input,
+          output: a.output,
+          status: a.ended ? ('complete' as const) : ('running' as const),
+          startedAt: now,
+          ...(a.ended && { completedAt: now }),
+        }))
         const llmSteps = Array.from(buf.llmSteps.entries()).map(([id, s]) => ({ id, name: s.name, workflow: s.workflow, content: s.content, thinking: s.thinking, usage: s.usage, isComplete: true, timestamp: now }))
         const toolCalls = Array.from(buf.toolCalls.entries()).map(([id, t]) => ({ id, name: t.name, input: t.input, output: t.output, workflow: t.workflow, agentId: t.agentId, isSandbox: t.isSandbox, status: 'complete' as const, timestamp: now }))
         const citations = buf.citations.map((c, i) => ({ id: `citation-${i}`, url: c.url, content: c.content, isCited: c.isCited, timestamp: now }))
@@ -376,7 +387,17 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
           onWorkflowStart: (name, input, eventId, agentId) => {
             const id = agentId || eventId || `agent-${buf.idCounter++}`
             if (buf.active) {
-              if (!buf.agents.has(id)) buf.agents.set(id, { name, input: input ? (typeof input === 'string' ? input : JSON.stringify(input)) : undefined })
+              if (!buf.agents.has(id)) {
+                buf.agents.set(id, {
+                  name,
+                  input: input
+                    ? typeof input === 'string'
+                      ? input
+                      : JSON.stringify(input)
+                    : undefined,
+                  ended: false,
+                })
+              }
               return
             }
             if (!isActiveJob()) return
@@ -392,7 +413,17 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
 
           onWorkflowEnd: (name, output, _eventId, agentId) => {
             if (buf.active) {
-              if (agentId) { const a = buf.agents.get(agentId); if (a) a.output = output ? (typeof output === 'string' ? output : JSON.stringify(output)) : undefined }
+              if (agentId) {
+                const agent = buf.agents.get(agentId)
+                if (agent) {
+                  agent.output = output
+                    ? typeof output === 'string'
+                      ? output
+                      : JSON.stringify(output)
+                    : undefined
+                  agent.ended = true
+                }
+              }
               return
             }
             if (!isActiveJob()) return

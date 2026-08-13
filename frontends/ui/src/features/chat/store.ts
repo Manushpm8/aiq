@@ -2311,15 +2311,11 @@ export const useChatStore = create<ChatStore>()(
             isComplete: true,
           }))
 
-          // Stop agents (running → complete or error based on job success)
+          // A terminal job status does not prove that an individual workflow
+          // finished. Keep workflow.end authoritative for observed progress.
           const stoppedAgents = deepResearchAgents.map((agent) => ({
             ...agent,
-            status:
-              agent.status === 'running'
-                ? isSuccessfulCompletion
-                  ? ('complete' as const)
-                  : ('error' as const)
-                : agent.status,
+            status: agent.status === 'running' ? ('error' as const) : agent.status,
           }))
 
           // Stop tool calls (running → complete or error based on job success)

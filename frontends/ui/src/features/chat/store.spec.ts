@@ -2067,6 +2067,27 @@ describe('useChatStore', () => {
       ])
     })
 
+    test('does not fabricate workflow completion from a successful job status', () => {
+      useChatStore.setState({
+        deepResearchTodos: [
+          { id: 'todo-1', content: 'Legacy task', status: 'in_progress' },
+        ],
+        deepResearchAgents: [
+          {
+            id: 'agent-start-only',
+            name: 'researcher-agent',
+            status: 'running',
+            startedAt: new Date(),
+          },
+        ],
+      })
+
+      useChatStore.getState().stopAllDeepResearchSpinners(true)
+
+      expect(useChatStore.getState().deepResearchTodos[0]?.status).toBe('completed')
+      expect(useChatStore.getState().deepResearchAgents[0]?.status).toBe('error')
+    })
+
     test('does NOT add error card when user message has no thinking steps', () => {
       const conv = createConversation([{ role: 'user', messageType: 'user', content: 'Hello' }])
 

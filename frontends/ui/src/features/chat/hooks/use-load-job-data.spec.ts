@@ -18,6 +18,7 @@ const mockClearDeepResearch = vi.fn()
 const mockSetCurrentStatus = vi.fn()
 const mockSetLoadedJobId = vi.fn()
 const mockSetStreamLoaded = vi.fn()
+const mockUpdateDeepResearchStatus = vi.fn()
 const mockStopAllDeepResearchSpinners = vi.fn()
 const mockAddErrorCard = vi.fn()
 const mockCompleteDeepResearch = vi.fn()
@@ -77,6 +78,7 @@ type MockChatSelectorState = {
   setCurrentStatus: typeof mockSetCurrentStatus
   setLoadedJobId: typeof mockSetLoadedJobId
   setStreamLoaded: typeof mockSetStreamLoaded
+  updateDeepResearchStatus: typeof mockUpdateDeepResearchStatus
   stopAllDeepResearchSpinners: typeof mockStopAllDeepResearchSpinners
   addErrorCard: typeof mockAddErrorCard
   completeDeepResearch: typeof mockCompleteDeepResearch
@@ -108,6 +110,7 @@ vi.mock('../store', () => ({
         setCurrentStatus: mockSetCurrentStatus,
         setLoadedJobId: mockSetLoadedJobId,
         setStreamLoaded: mockSetStreamLoaded,
+        updateDeepResearchStatus: mockUpdateDeepResearchStatus,
         stopAllDeepResearchSpinners: mockStopAllDeepResearchSpinners,
         addErrorCard: mockAddErrorCard,
         completeDeepResearch: mockCompleteDeepResearch,
@@ -481,5 +484,86 @@ describe('useLoadJobData', () => {
       currentStatus: 'researching',
     })
     expect(updates).not.toHaveProperty('deepResearchTodos')
+  })
+
+  test('keeps a start-only workflow agent running in full stream replay', async () => {
+    mockGetJobStatus.mockResolvedValue({ job_id: 'job-123', status: 'success', error: null })
+    mockCreateDeepResearchClient.mockImplementation(({ callbacks }) => ({
+      connect: vi.fn(() => {
+        callbacks.onWorkflowStart?.(
+          'researcher-agent',
+          'Research query',
+          'event-1',
+          'researcher-1'
+        )
+        callbacks.onComplete?.()
+      }),
+      disconnect: vi.fn(),
+      isConnected: vi.fn(() => false),
+      getLastEventId: vi.fn(() => null),
+    }))
+
+    const { result } = renderHook(() => useLoadJobData())
+
+    await act(async () => {
+      await result.current.importJobStream('job-123')
+    })
+
+    const replayCommit = vi.mocked(useChatStore.setState).mock.calls[0]?.[0]
+    const updates = (replayCommit as unknown as (state: { currentStatus: string }) => Record<string, unknown>)({
+      currentStatus: 'researching',
+    })
+    const agents = updates.deepResearchAgents as Array<Record<string, unknown>>
+
+    expect(mockUpdateDeepResearchStatus).toHaveBeenCalledWith('success')
+    expect(agents[0]).toMatchObject({
+      id: 'researcher-1',
+      name: 'researcher-agent',
+      status: 'running',
+    })
+    expect(agents[0]).not.toHaveProperty('completedAt')
+  })
+
+  test('completes a workflow agent in replay only after workflow.end', async () => {
+    mockGetJobStatus.mockResolvedValue({ job_id: 'job-123', status: 'success', error: null })
+    mockCreateDeepResearchClient.mockImplementation(({ callbacks }) => ({
+      connect: vi.fn(() => {
+        callbacks.onWorkflowStart?.(
+          'researcher-agent',
+          'Research query',
+          'event-1',
+          'researcher-1'
+        )
+        callbacks.onWorkflowEnd?.(
+          'researcher-agent',
+          'Research notes',
+          'event-2',
+          'researcher-1'
+        )
+        callbacks.onComplete?.()
+      }),
+      disconnect: vi.fn(),
+      isConnected: vi.fn(() => false),
+      getLastEventId: vi.fn(() => null),
+    }))
+
+    const { result } = renderHook(() => useLoadJobData())
+
+    await act(async () => {
+      await result.current.importJobStream('job-123')
+    })
+
+    const replayCommit = vi.mocked(useChatStore.setState).mock.calls[0]?.[0]
+    const updates = (replayCommit as unknown as (state: { currentStatus: string }) => Record<string, unknown>)({
+      currentStatus: 'researching',
+    })
+    const agents = updates.deepResearchAgents as Array<Record<string, unknown>>
+
+    expect(agents[0]).toMatchObject({
+      id: 'researcher-1',
+      status: 'complete',
+      output: 'Research notes',
+      completedAt: expect.any(Date),
+    })
   })
 })

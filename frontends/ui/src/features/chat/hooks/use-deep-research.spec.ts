@@ -898,6 +898,67 @@ describe('useDeepResearch', () => {
       ])
     })
 
+    test('replay buffer keeps a start-only workflow agent running after refresh', async () => {
+      await setupBufferedHook()
+
+      act(() => {
+        mockClient?.callbacks.onWorkflowStart?.(
+          'researcher-agent',
+          'Research query',
+          'event-1',
+          'researcher-1'
+        )
+        mockClient?.callbacks.onStreamMode?.('live')
+      })
+
+      const replayCommit = vi.mocked(useChatStore.setState).mock.calls[0]?.[0]
+      const updates = (replayCommit as unknown as (state: { currentStatus: string }) => Record<string, unknown>)({
+        currentStatus: 'researching',
+      })
+      const agents = updates.deepResearchAgents as Array<Record<string, unknown>>
+
+      expect(agents).toHaveLength(1)
+      expect(agents[0]).toMatchObject({
+        id: 'researcher-1',
+        name: 'researcher-agent',
+        status: 'running',
+      })
+      expect(agents[0]).not.toHaveProperty('completedAt')
+    })
+
+    test('replay buffer completes a workflow agent only after workflow.end', async () => {
+      await setupBufferedHook()
+
+      act(() => {
+        mockClient?.callbacks.onWorkflowStart?.(
+          'researcher-agent',
+          'Research query',
+          'event-1',
+          'researcher-1'
+        )
+        mockClient?.callbacks.onWorkflowEnd?.(
+          'researcher-agent',
+          'Research notes',
+          'event-2',
+          'researcher-1'
+        )
+        mockClient?.callbacks.onStreamMode?.('live')
+      })
+
+      const replayCommit = vi.mocked(useChatStore.setState).mock.calls[0]?.[0]
+      const updates = (replayCommit as unknown as (state: { currentStatus: string }) => Record<string, unknown>)({
+        currentStatus: 'researching',
+      })
+      const agents = updates.deepResearchAgents as Array<Record<string, unknown>>
+
+      expect(agents[0]).toMatchObject({
+        id: 'researcher-1',
+        status: 'complete',
+        output: 'Research notes',
+        completedAt: expect.any(Date),
+      })
+    })
+
     test('replay buffer ignores workflow-scoped sub-agent todos after refresh', async () => {
       await setupBufferedHook()
 
