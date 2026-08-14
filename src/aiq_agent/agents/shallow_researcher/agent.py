@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -39,6 +40,7 @@ from aiq_agent.common import get_source_id_for_tool
 from aiq_agent.common import load_prompt
 from aiq_agent.common import render_prompt_template
 from aiq_agent.common.callbacks import SUPPRESS_OUTPUT_ARTIFACT_TAG
+from aiq_agent.common.citation_verification import CitationIntegrityError
 from aiq_agent.common.citation_verification import EmptySourceRegistryError
 from aiq_agent.common.citation_verification import SourceEntry
 from aiq_agent.common.citation_verification import SourceRegistry
@@ -58,6 +60,105 @@ logger = logging.getLogger(__name__)
 # Path to this agent's directory (for loading prompts)
 AGENT_DIR = Path(__file__).parent
 
+_SOURCE_SECTION_HEADING_RE = re.compile(
+    r"^[^\S\n]*(?:"
+    r"#{1,6}[^\S\n]+(?:Sources|References):?"
+    r"|\*\*(?:Sources|References):?\*\*:?"
+    r"|(?:Sources|References):?"
+    r")[^\S\n]*$",
+    re.IGNORECASE,
+)
+_INLINE_CITATION_RE = re.compile(r"\[(\d+)\]")
+_REFERENCE_ENTRY_LINE_RE = re.compile(r"^[^\S\n]*(?P<bullet>[-*][^\S\n]*)?\[(?P<number>\d+)\][^\S\n]+(?P<target>.+)$")
+_REFERENCE_TARGET_RE = re.compile(
+    r"(?:https?://\S+|[^\s,]+\.\w{2,5}(?:,[^\n]+)?|[A-Za-z0-9]+(?:_+[A-Za-z0-9]+)+)$",
+    re.IGNORECASE,
+)
+
+
+def _reference_entry_number(line: str, previous_number: int | None) -> int | None:
+    """Return a reference number only for an unambiguous definition line."""
+    match = _REFERENCE_ENTRY_LINE_RE.fullmatch(line)
+    if match is None:
+        return None
+
+    number = int(match.group("number"))
+    if previous_number is not None and number <= previous_number:
+        # Reference definitions are unique and ordered. A repeated/reset
+        # marker begins answer prose, even when it immediately follows them.
+        return None
+
+    target = match.group("target").strip()
+    if match.group("bullet") is None and _REFERENCE_TARGET_RE.search(target) is None:
+        # An unbulleted marker-first sentence is answer text. Verified
+        # unbulleted definitions carry a URL, file/page key, or tool key.
+        return None
+    return number
+
+
+def _source_section_spans(report_text: str) -> list[tuple[int, int]]:
+    """Locate canonical source headings with definitions, or empty trailing headings."""
+    lines = report_text.splitlines(keepends=True)
+    offsets: list[int] = []
+    offset = 0
+    for line in lines:
+        offsets.append(offset)
+        offset += len(line)
+
+    spans: list[tuple[int, int]] = []
+    line_index = 0
+    while line_index < len(lines):
+        heading = lines[line_index].rstrip("\r\n")
+        if _SOURCE_SECTION_HEADING_RE.fullmatch(heading) is None:
+            line_index += 1
+            continue
+
+        first_definition = line_index + 1
+        while first_definition < len(lines) and not lines[first_definition].strip():
+            first_definition += 1
+
+        after_definitions = first_definition
+        previous_number: int | None = None
+        while after_definitions < len(lines):
+            number = _reference_entry_number(lines[after_definitions].rstrip("\r\n"), previous_number)
+            if number is None:
+                break
+            previous_number = number
+            after_definitions += 1
+
+        if after_definitions > first_definition:
+            # Blank lines after a definition block are section separators, not
+            # answer content. Consume them so preserved prose keeps its spacing.
+            next_content = after_definitions
+            while next_content < len(lines) and not lines[next_content].strip():
+                next_content += 1
+            end = offsets[next_content] if next_content < len(lines) else len(report_text)
+            spans.append((offsets[line_index], end))
+            line_index = next_content
+        elif first_definition == len(lines):
+            spans.append((offsets[line_index], len(report_text)))
+            break
+        else:
+            # An exact heading followed by prose is answer content, not a
+            # reference section, and must not be removed.
+            line_index += 1
+
+    return spans
+
+
+def _remove_source_sections(report_text: str, spans: Sequence[tuple[int, int]]) -> str:
+    """Remove only recognized source-section spans, preserving surrounding prose."""
+    if not spans:
+        return report_text
+
+    pieces: list[str] = []
+    previous_end = 0
+    for start, end in spans:
+        pieces.append(report_text[previous_end:start])
+        previous_end = end
+    pieces.append(report_text[previous_end:])
+    return "".join(pieces)
+
 
 def _append_minimal_citation(report_text: str, source: SourceEntry) -> str:
     """Append one verified citation when the model omitted references."""
@@ -65,23 +166,9 @@ def _append_minimal_citation(report_text: str, source: SourceEntry) -> str:
     if not citation_target:
         return report_text
 
-    # verify_citations may strip every citation line under a **References:**
-    # (or ## References / ## Sources) header and leave the empty header
-    # behind. Drop that trailing header before we append our own so the final
-    # output has exactly one references section.
-    content = report_text.rstrip()
-    content = re.sub(
-        r"\n{1,2}\*\*References:?\*\*\s*$",
-        "",
-        content,
-        flags=re.IGNORECASE,
-    ).rstrip()
-    content = re.sub(
-        r"\n{1,2}#{2,3}\s+(?:References|Sources)\s*$",
-        "",
-        content,
-        flags=re.IGNORECASE,
-    ).rstrip()
+    # Replace only canonical source sections. Similar-looking answer headings
+    # and prose (for example, "Sources of renewable energy") are content.
+    content = _remove_source_sections(report_text, _source_section_spans(report_text)).rstrip()
     if content.endswith((".", "!", "?")):
         content = f"{content[:-1]} [1]{content[-1]}"
     else:
@@ -94,6 +181,36 @@ def _append_minimal_citation(report_text: str, source: SourceEntry) -> str:
         reference = f"- [1] {citation_target}"
 
     return f"{content}\n\n**References:**\n{reference}"
+
+
+def _has_citation_integrity(report_text: str, valid_citations: Sequence[dict[str, Any]]) -> bool:
+    """Return whether a verified report has both a source and an inline marker."""
+    valid_numbers = {
+        int(number)
+        for citation in valid_citations
+        if (number := citation.get("number")) is not None and str(number).isdigit()
+    }
+    if not valid_numbers:
+        return False
+
+    source_sections = _source_section_spans(report_text)
+    if not source_sections:
+        return False
+    # Definition labels are not inline citations. Remove every recognized
+    # source block so a later duplicate block cannot satisfy the invariant.
+    prose = _remove_source_sections(report_text, source_sections)
+    return any(int(number) in valid_numbers for number in _INLINE_CITATION_RE.findall(prose))
+
+
+def _format_citation_repair_sources(sources: Sequence[SourceEntry]) -> str:
+    """Render numbered source lines that a repair pass can copy verbatim."""
+    lines: list[str] = []
+    for number, source in enumerate(sources, 1):
+        if source.url:
+            lines.append(f"- [{number}] Source {number} - {source.url}")
+        elif source.citation_key:
+            lines.append(f"- [{number}] {source.citation_key}")
+    return "\n".join(lines)
 
 
 class ShallowResearcherAgent:
@@ -129,6 +246,7 @@ class ShallowResearcherAgent:
         system_prompt: str | None = None,
         max_llm_turns: int = 10,
         max_tool_iterations: int = 5,
+        citation_repair_timeout: float = 60.0,
         callbacks: list[Any] | None = None,
     ) -> None:
         """
@@ -142,12 +260,15 @@ class ShallowResearcherAgent:
             max_llm_turns: Maximum LLM interaction turns (default 10).
             max_tool_iterations: Maximum tool-calling iterations before forcing
                                 synthesis (default 5).
+            citation_repair_timeout: Maximum seconds for the one-shot citation
+                                     repair call (default 60).
             callbacks: Optional list of LangGraph callbacks.
         """
         self.llm_provider = llm_provider
         self.tools = list(tools)
         self.max_llm_turns = max_llm_turns
         self.max_tool_iterations = max_tool_iterations
+        self.citation_repair_timeout = citation_repair_timeout
         self.callbacks = callbacks or []
 
         # Load prompts
@@ -187,6 +308,59 @@ class ShallowResearcherAgent:
     def _get_llm(self) -> BaseChatModel:
         """Get the LLM for shallow research."""
         return self.llm_provider.get(LLMRole.RESEARCHER)
+
+    async def _repair_missing_citations(
+        self,
+        messages: Sequence[Any],
+        sources: Sequence[SourceEntry],
+    ) -> str:
+        """Run one bounded, tool-free repair against captured source identities."""
+        source_catalog = _format_citation_repair_sources(sources)
+        if not source_catalog:
+            raise CitationIntegrityError()
+
+        repair_system = SystemMessage(
+            content=(
+                "You are a deterministic citation-repair editor. Do not answer the original question again from "
+                "memory and do not call tools. Rewrite only the immediately preceding draft. Keep only claims "
+                "supported by prior tool results. Your response is invalid unless it contains at least one inline "
+                "[N] marker and a final **References:** section copied from the allowed reference lines."
+            )
+        )
+        repair_request = HumanMessage(
+            content=(
+                "The immediately preceding draft failed the citation contract. Rewrite it once using only claims "
+                "supported by the prior tool results. Preserve the answer's meaning, remove unsupported claims, "
+                "and do not call tools. Add an inline [N] marker after each externally verified claim and finish "
+                "with a `**References:**` section. Copy the corresponding allowed reference lines verbatim; never "
+                "invent or reconstruct a URL. Return only the repaired report.\n\n"
+                f"Allowed reference lines:\n{source_catalog}"
+            )
+        )
+        repair_config: dict[str, Any] = {"tags": [SUPPRESS_OUTPUT_ARTIFACT_TAG]}
+        if self.callbacks:
+            repair_config["callbacks"] = self.callbacks
+
+        try:
+            response = await asyncio.wait_for(
+                self._get_llm().ainvoke(
+                    [repair_system, *messages, repair_request],
+                    config=repair_config,
+                ),
+                timeout=self.citation_repair_timeout,
+            )
+        except Exception as ex:
+            logger.warning(
+                "Shallow citation repair failed (error_type=%s detail_%s)",
+                type(ex).__name__,
+                log_content_metadata(ex),
+            )
+            raise CitationIntegrityError() from ex
+
+        repaired_content = getattr(response, "content", None)
+        if not isinstance(repaired_content, str) or not repaired_content.strip():
+            raise CitationIntegrityError()
+        return repaired_content
 
     def _build_graph(self) -> CompiledStateGraph:
         """Build the LangGraph StateGraph."""
@@ -230,6 +404,7 @@ class ShallowResearcherAgent:
             processed_history = list(messages)
 
             try:
+                draft_config = {"tags": [SUPPRESS_OUTPUT_ARTIFACT_TAG]}
                 if iterations >= self.max_tool_iterations:
                     logger.warning("Max iterations (%d) reached. Forcing synthesis.", iterations)
 
@@ -243,14 +418,13 @@ class ShallowResearcherAgent:
                     )
 
                     full_messages = [system_message] + processed_history + [synthesis_anchor]
-                    response = await self._get_llm().ainvoke(full_messages)
+                    response = await self._get_llm().ainvoke(full_messages, config=draft_config)
                     return {"messages": [response], "tool_iterations": iterations}
 
                 llm = self._get_llm()
                 llm_with_tools = llm.bind_tools(self.tools) if self.tools else llm
                 full_messages = [system_message] + processed_history
-                pre_evidence_config = {"tags": [SUPPRESS_OUTPUT_ARTIFACT_TAG]} if iterations == 0 else None
-                response = await llm_with_tools.ainvoke(full_messages, config=pre_evidence_config)
+                response = await llm_with_tools.ainvoke(full_messages, config=draft_config)
 
                 if self.tools and iterations == 0 and not getattr(response, "tool_calls", None):
                     logger.warning("Shallow researcher returned an answer before collecting evidence; retrying once")
@@ -263,7 +437,7 @@ class ShallowResearcherAgent:
                     retry_llm = llm.bind_tools(self.tools, parallel_tool_calls=False)
                     response = await retry_llm.ainvoke(
                         full_messages + [response, tool_required],
-                        config=pre_evidence_config,
+                        config=draft_config,
                     )
                     retry_tool_calls = getattr(response, "tool_calls", None) or []
                     if len(retry_tool_calls) != 1 or retry_tool_calls[0].get("name") not in source_tool_names:
@@ -422,12 +596,40 @@ class ShallowResearcherAgent:
                     )
                     content = verification.verified_report
                     sources = registry.all_sources()
-                    if not verification.valid_citations and len(sources) == 1:
+                    citation_integrity = _has_citation_integrity(content, verification.valid_citations)
+                    if not citation_integrity and len(sources) == 1:
                         content = _append_minimal_citation(content, sources[0])
+                    elif not citation_integrity:
+                        logger.info(
+                            "Shallow report is missing citation integrity; attempting one bounded repair "
+                            "(registered_sources=%d)",
+                            len(sources),
+                        )
+                        content = await self._repair_missing_citations(validated_result["messages"], sources)
+                        repair_verification = verify_citations(content, registry, reference_sources=sources)
+                        content = repair_verification.verified_report
+                        if not _has_citation_integrity(content, repair_verification.valid_citations):
+                            logger.warning(
+                                "Shallow citation repair did not restore integrity "
+                                "(registered_sources=%d verified_sources=%d)",
+                                len(sources),
+                                len(repair_verification.valid_citations),
+                            )
                 # Step 2: sanitize report (strip body URLs, shortened URLs, unsafe URLs)
                 sanitization = sanitize_report(content)
                 content = sanitization.sanitized_report
                 final_verification = verify_citations(content, registry)
+                if not _has_citation_integrity(
+                    final_verification.verified_report,
+                    final_verification.valid_citations,
+                ):
+                    logger.warning(
+                        "Shallow report failed final citation integrity check "
+                        "(registered_sources=%d verified_sources=%d)",
+                        len(registry.all_sources()),
+                        len(final_verification.valid_citations),
+                    )
+                    raise CitationIntegrityError()
                 content = final_verification.verified_report
                 final_cited_urls = list(
                     dict.fromkeys(
