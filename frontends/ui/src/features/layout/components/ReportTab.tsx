@@ -21,7 +21,7 @@ import { Document, ChevronDown } from '@/adapters/ui/icons'
 import { MarkdownRenderer } from '@/shared/components/MarkdownRenderer'
 import { SourceStrip } from '@/shared/components/Sources/SourceStrip'
 import { mapCitationSource } from '@/shared/components/Sources/source-utils'
-import { stripTrailingReferences } from '@/shared/components/Sources/parse-references'
+import { splitReferences, stripTrailingReferences } from '@/shared/components/Sources/parse-references'
 import { useChatStore, selectResolvedDeepResearchJobId } from '@/features/chat'
 import { ExportFooter } from './ExportFooter'
 import { FileCard } from './FileCard'
@@ -51,18 +51,20 @@ export const ReportTab: FC<ReportTabProps> = ({ children }) => {
 
   const [showFiles, setShowFiles] = useState(false)
 
-  const sources = useMemo(() => {
-    const all = deepResearchCitations ?? []
-    const cited = all.filter((c) => c.isCited)
-    return (cited.length > 0 ? cited : all).map(mapCitationSource)
-  }, [deepResearchCitations])
-
   const reportContentStr = typeof reportContent === 'string' ? reportContent : ''
-  const hasStructuredCitations = sources.length > 0
-  const reportBody = useMemo(
-    () => (hasStructuredCitations ? stripTrailingReferences(reportContentStr) : reportContentStr),
-    [reportContentStr, hasStructuredCitations]
-  )
+
+  const { reportBody, sources } = useMemo(() => {
+    const split = splitReferences(reportContentStr)
+    if (split.sources.length > 0) {
+      return { reportBody: split.body, sources: split.sources }
+    }
+    const fallback = (deepResearchCitations ?? []).map(mapCitationSource)
+    return {
+      reportBody: fallback.length > 0 ? stripTrailingReferences(reportContentStr) : reportContentStr,
+      sources: fallback,
+    }
+  }, [reportContentStr, deepResearchCitations])
+
   const isEmpty = !reportContentStr.trim()
   const isGeneratingReport = isStreaming && currentStatus === 'writing'
   const isResearchNotes = reportContentCategory === 'research_notes'

@@ -5,37 +5,8 @@ import { describe, expect, test } from 'vitest'
 import {
   splitReferences,
   tabularizeEntityLines,
-  renumberOrderedLists,
-  nestBulletsUnderOrderedItems,
   stripTrailingReferences,
 } from './parse-references'
-
-describe('nestBulletsUnderOrderedItems', () => {
-  test('indents bullets that follow a numbered item so they nest under it', () => {
-    const md = '1. Top drivers:\n- Schumacher: 91\n- Prost: 51'
-    expect(nestBulletsUnderOrderedItems(md)).toBe('1. Top drivers:\n   - Schumacher: 91\n   - Prost: 51')
-  })
-
-  test('leaves top-level bullets with no preceding numbered item alone', () => {
-    const md = '- a\n- b'
-    expect(nestBulletsUnderOrderedItems(md)).toBe(md)
-  })
-
-  test('stops nesting at a heading', () => {
-    const md = '1. x\n- under x\n## Section\n- top level'
-    expect(nestBulletsUnderOrderedItems(md)).toBe('1. x\n   - under x\n## Section\n- top level')
-  })
-
-  test('re-indents an under-indented (1-2 space) bullet to nest under the item', () => {
-    const md = '2. Categories:\n  - Garment: $1\n  - Swimwear: $2'
-    expect(nestBulletsUnderOrderedItems(md)).toBe('2. Categories:\n   - Garment: $1\n   - Swimwear: $2')
-  })
-
-  test('leaves an already-nested (3+ space) bullet untouched', () => {
-    const md = '2. Categories:\n   - Garment: $1\n      - deeper'
-    expect(nestBulletsUnderOrderedItems(md)).toBe(md)
-  })
-})
 
 describe('stripTrailingReferences', () => {
   test('strips a trailing `## Sources` section ([N] Title: URL format)', () => {
@@ -62,29 +33,6 @@ describe('stripTrailingReferences', () => {
   test('leaves a body with no references section unchanged', () => {
     const md = 'Just a report.\n\n## Conclusion\nAll good.'
     expect(stripTrailingReferences(md)).toBe(md)
-  })
-})
-
-describe('renumberOrderedLists', () => {
-  test('renumbers top-level items that all restart at 1', () => {
-    const md = '1. Counts:\n- a: 1\n- b: 2\n1. Top drivers:\n- x\n1. Summary:'
-    expect(renumberOrderedLists(md)).toBe('1. Counts:\n- a: 1\n- b: 2\n2. Top drivers:\n- x\n3. Summary:')
-  })
-
-  test('resets numbering at each heading so sections keep 1-based order', () => {
-    const md = '## A\n1. one\n1. two\n## B\n1. three'
-    expect(renumberOrderedLists(md)).toBe('## A\n1. one\n2. two\n## B\n1. three')
-  })
-
-  test('leaves already-sequential lists and nested items untouched', () => {
-    const md = '1. one\n2. two\n   1. nested'
-    expect(renumberOrderedLists(md)).toBe(md)
-  })
-
-  test('renumber + nest-bullets leave fenced content untouched', () => {
-    const body = '1. one\n```chart\n1. not-a-list-item\n- not-a-bullet\n```\n1. two'
-    expect(renumberOrderedLists(body)).toBe('1. one\n```chart\n1. not-a-list-item\n- not-a-bullet\n```\n2. two')
-    expect(nestBulletsUnderOrderedItems(body)).toBe(body)
   })
 })
 

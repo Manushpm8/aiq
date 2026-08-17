@@ -214,6 +214,26 @@ describe('AgentResponse', () => {
     expect(screen.queryByRole('region', { name: 'Sources' })).not.toBeInTheDocument()
   })
 
+  test('keeps a blank-line-separated bullet as a separate top-level list, not a child of the numbered item', () => {
+    const content = '1. First\n2. Second\n\n- Separate topic'
+
+    render(<AgentResponse content={content} />)
+
+    const body = screen.getByTestId('markdown-body')
+    expect(body.textContent).toContain('\n- Separate topic')
+    expect(body.textContent).not.toContain('   - Separate topic')
+  })
+
+  test('leaves two blank-line-separated ordered lists with their own numbering', () => {
+    const content = '1. First\n2. Second\n\n1. Fresh start\n2. Next'
+
+    render(<AgentResponse content={content} />)
+
+    const body = screen.getByTestId('markdown-body')
+    expect(body.textContent).toContain('\n1. Fresh start')
+    expect(body.textContent).not.toContain('3. Fresh start')
+  })
+
   test('Copy action copies the original full content including references', async () => {
     const user = userEvent.setup()
     const content =

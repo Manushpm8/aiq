@@ -17,12 +17,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { ChevronRight, LoadingSpinner } from '@/adapters/ui/icons'
 import { MarkdownRenderer } from '@/shared/components/MarkdownRenderer'
 import { SourceList } from '@/shared/components/Sources/SourceList'
-import {
-  splitReferences,
-  tabularizeEntityLines,
-  renumberOrderedLists,
-  nestBulletsUnderOrderedItems,
-} from '@/shared/components/Sources/parse-references'
+import { splitReferences, tabularizeEntityLines } from '@/shared/components/Sources/parse-references'
 import { CopyButton } from '@/shared/components/Actions/CopyButton'
 import { formatTime } from '@/shared/utils/format-time'
 import { useLayoutStore } from '@/features/layout/store'
@@ -75,8 +70,7 @@ export const AgentResponse: FC<AgentResponseProps> = ({
 
   const { body, sources } = useMemo(() => {
     const split = splitReferences(content ?? '')
-    const body = nestBulletsUnderOrderedItems(renumberOrderedLists(tabularizeEntityLines(split.body)))
-    return { body, sources: split.sources }
+    return { body: tabularizeEntityLines(split.body), sources: split.sources }
   }, [content])
 
   const isJobActive =

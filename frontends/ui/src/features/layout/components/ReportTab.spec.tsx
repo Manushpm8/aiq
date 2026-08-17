@@ -20,8 +20,20 @@ vi.mock('@/features/chat', () => ({
 
 // Mock MarkdownRenderer
 vi.mock('@/shared/components/MarkdownRenderer', () => ({
-  MarkdownRenderer: ({ content, isStreaming }: { content: string; isStreaming?: boolean }) => (
-    <div data-testid="markdown" data-streaming={isStreaming}>
+  MarkdownRenderer: ({
+    content,
+    isStreaming,
+    sources,
+  }: {
+    content: string
+    isStreaming?: boolean
+    sources?: Array<{ index: number; url?: string }>
+  }) => (
+    <div
+      data-testid="markdown"
+      data-streaming={isStreaming}
+      data-sources={JSON.stringify((sources ?? []).map((s) => ({ index: s.index, url: s.url ?? null })))}
+    >
       {content}
       {isStreaming && <span data-testid="streaming-indicator">Generating report...</span>}
     </div>
@@ -122,7 +134,7 @@ describe('ReportTab', () => {
     expect(screen.getByTestId('export-footer')).toBeInTheDocument()
   })
 
-  test('preserves markdown citations when there are no structured deep-research citations', () => {
+  test('uses the report own parsed references and strips the block even without discovery citations', () => {
     vi.mocked(useChatStore).mockImplementation((selector?: (s: any) => any) => {
       const state = {
         reportContent:
@@ -137,8 +149,118 @@ describe('ReportTab', () => {
     render(<ReportTab />)
 
     const markdown = screen.getByTestId('markdown')
-    expect(markdown).toHaveTextContent('Sources')
-    expect(markdown).toHaveTextContent('https://example.com/sky')
+    expect(markdown).not.toHaveTextContent('example.com')
+    expect(screen.getByTestId('source-strip')).toBeInTheDocument()
+    const sources = JSON.parse(markdown.getAttribute('data-sources') ?? '[]')
+    expect(sources).toEqual([{ index: 1, url: 'https://example.com/sky' }])
+  })
+
+  test('keeps the body intact when the trailing block is unparseable and there are no discovery citations', () => {
+    vi.mocked(useChatStore).mockImplementation((selector?: (s: any) => any) => {
+      const state = {
+        reportContent: 'The sky is blue.\n\n## Sources\nInternal notes without markers',
+        isStreaming: false,
+        currentStatus: null,
+        deepResearchCitations: [],
+      }
+      return selector ? selector(state) : state
+    })
+
+    render(<ReportTab />)
+
+    const markdown = screen.getByTestId('markdown')
+    expect(markdown).toHaveTextContent('Internal notes without markers')
+    expect(screen.queryByTestId('source-strip')).not.toBeInTheDocument()
+  })
+
+  test('resolves each [N] marker to the source the report assigned, not discovery order', () => {
+    vi.mocked(useChatStore).mockImplementation((selector?: (s: any) => any) => {
+      const state = {
+        reportContent:
+          'Alpha [1] and Beta [2].\n\n## Sources\n- [1] Beta source - https://beta.example.com\n- [2] Alpha source - https://alpha.example.com',
+        isStreaming: false,
+        currentStatus: null,
+        deepResearchCitations: [
+          { id: 'd1', url: 'https://alpha.example.com', content: 'Alpha source', isCited: true },
+          { id: 'd2', url: 'https://beta.example.com', content: 'Beta source', isCited: true },
+        ],
+      }
+      return selector ? selector(state) : state
+    })
+
+    render(<ReportTab />)
+
+    const sources = JSON.parse(screen.getByTestId('markdown').getAttribute('data-sources') ?? '[]')
+    expect(sources).toEqual([
+      { index: 1, url: 'https://beta.example.com' },
+      { index: 2, url: 'https://alpha.example.com' },
+    ])
+  })
+
+  test('renders gracefully across a gap in the report [N] numbering', () => {
+    vi.mocked(useChatStore).mockImplementation((selector?: (s: any) => any) => {
+      const state = {
+        reportContent:
+          'First [1] and third [3].\n\n## Sources\n- [1] First - https://one.example.com\n- [3] Third - https://three.example.com',
+        isStreaming: false,
+        currentStatus: null,
+        deepResearchCitations: [],
+      }
+      return selector ? selector(state) : state
+    })
+
+    render(<ReportTab />)
+
+    const sources = JSON.parse(screen.getByTestId('markdown').getAttribute('data-sources') ?? '[]')
+    expect(sources).toEqual([
+      { index: 1, url: 'https://one.example.com' },
+      { index: 3, url: 'https://three.example.com' },
+    ])
+  })
+
+  test('resolves the dense sequential case where report order matches discovery', () => {
+    vi.mocked(useChatStore).mockImplementation((selector?: (s: any) => any) => {
+      const state = {
+        reportContent:
+          'A [1], B [2], C [3].\n\n## Sources\n- [1] First - https://one.example.com\n- [2] Second - https://two.example.com\n- [3] Third - https://three.example.com',
+        isStreaming: false,
+        currentStatus: null,
+        deepResearchCitations: [],
+      }
+      return selector ? selector(state) : state
+    })
+
+    render(<ReportTab />)
+
+    const sources = JSON.parse(screen.getByTestId('markdown').getAttribute('data-sources') ?? '[]')
+    expect(sources).toEqual([
+      { index: 1, url: 'https://one.example.com' },
+      { index: 2, url: 'https://two.example.com' },
+      { index: 3, url: 'https://three.example.com' },
+    ])
+  })
+
+  test('falls back to discovery citations keyed by marker number when the report has no structured block', () => {
+    vi.mocked(useChatStore).mockImplementation((selector?: (s: any) => any) => {
+      const state = {
+        reportContent: 'Fact one [1]. Fact two [2].',
+        isStreaming: false,
+        currentStatus: null,
+        deepResearchCitations: [
+          { id: 'd1', url: 'https://one.example.com', content: 'One', isCited: false },
+          { id: 'd2', url: 'https://two.example.com', content: 'Two', isCited: true },
+        ],
+      }
+      return selector ? selector(state) : state
+    })
+
+    render(<ReportTab />)
+
+    const sources = JSON.parse(screen.getByTestId('markdown').getAttribute('data-sources') ?? '[]')
+    expect(sources).toEqual([
+      { index: 1, url: 'https://one.example.com' },
+      { index: 2, url: 'https://two.example.com' },
+    ])
   })
 
   test('strips the redundant markdown references when structured citations exist', () => {

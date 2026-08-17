@@ -111,83 +111,8 @@ export function stripTrailingReferences(body: string): string {
   return body.replace(TRAILING_REFERENCES_RE, '').replace(/\s+$/, '')
 }
 
-const HEADING_RE = /^\s{0,3}#{1,6}\s/
-const TOP_ORDERED_RE = /^(\d+)\.(\s)/
 /** A fenced code-block delimiter (```). */
 const FENCE_RE = /^\s*```/
-
-/**
- * Renumber top-level ordered-list items sequentially. Markdown restarts an
- * ordered list whenever a sub-list or block interrupts it, so a model that emits
- * `1.` for every section renders as "1. 1. 1." instead of "1. 2. 3.". This walks
- * the body and renumbers top-level `N.` items in order, resetting at each heading
- * (so distinct sections keep their own 1-based numbering). Indented / nested
- * ordered items are left untouched, and already-sequential lists are unchanged.
- */
-export function renumberOrderedLists(body: string): string {
-  if (!body) return body
-  const lines = body.split('\n')
-  let counter = 0
-  let inFence = false
-  for (let i = 0; i < lines.length; i++) {
-    if (FENCE_RE.test(lines[i])) {
-      inFence = !inFence
-      continue
-    }
-    if (inFence) continue
-    if (HEADING_RE.test(lines[i])) {
-      counter = 0
-      continue
-    }
-    const match = lines[i].match(TOP_ORDERED_RE)
-    if (match) {
-      counter += 1
-      lines[i] = lines[i].replace(TOP_ORDERED_RE, `${counter}.${match[2]}`)
-    }
-  }
-  return lines.join('\n')
-}
-
-const BULLET_TOP_RE = /^(\s*)[-*+]\s/
-
-/**
- * Indent bullet lists that follow a top-level ordered item so they render nested
- * under it. A model often emits the bullets at (or near) the same left margin as
- * the `N.` items, which reads as a flat list. While in an ordered list, an
- * under-indented bullet (0-2 leading spaces) is normalized to a 3-space indent
- * so CommonMark nests it as a sub-list of the preceding numbered item; bullets
- * already indented >= 3 (correctly nested or deeper) are left untouched, and
- * top-level bullets with no preceding numbered item are never moved.
- */
-export function nestBulletsUnderOrderedItems(body: string): string {
-  if (!body) return body
-  const lines = body.split('\n')
-  let inOrdered = false
-  let inFence = false
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    if (FENCE_RE.test(line)) {
-      inFence = !inFence
-      continue
-    }
-    if (inFence) continue
-    if (HEADING_RE.test(line)) {
-      inOrdered = false
-      continue
-    }
-    if (TOP_ORDERED_RE.test(line)) {
-      inOrdered = true
-      continue
-    }
-    const bullet = line.match(BULLET_TOP_RE)
-    if (bullet) {
-      if (inOrdered && bullet[1].length < 3) lines[i] = `   ${line.replace(/^\s+/, '')}`
-      continue
-    }
-    if (line.trim() !== '' && !/^\s/.test(line)) inOrdered = false
-  }
-  return lines.join('\n')
-}
 
 /** A short `label: value` line with no sentence punctuation. */
 const ENTITY_LINE_RE = /^\s*([^:\n]{1,60}?):\s+(\S.{0,80})$/
