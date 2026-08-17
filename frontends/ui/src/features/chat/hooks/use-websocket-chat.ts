@@ -57,12 +57,14 @@ import {
   formatPayload,
   extractFoldedOutput,
   splitPayload,
-  isFoldedTextStep,
 } from '../lib/intermediate-step-parser'
 import { getToolArgSummary } from '@/shared/components/research'
 
 const EMPTY_MESSAGES: ChatMessage[] = []
 const EMPTY_CONVERSATIONS: Conversation[] = []
+
+export const deriveStepContent = (payload: string): string =>
+  formatPayload(extractFoldedOutput(payload || ''))
 
 /**
  * Structured async-job escalation signal parsed from a system_response `content` string.
@@ -841,11 +843,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         const workflowLabel = getWorkflowDisplayName(functionName)
         const displayName = workflowLabel || getDisplayName(functionName)
         const isTopLevel = isFunctionStepName(content.name)
-        // Folded text steps (reasoning/reflection/explanation) keep only their
-        // output half so the note reads clean; other steps keep the full payload.
-        const formattedPayload = isFoldedTextStep(functionName)
-          ? formatPayload(extractFoldedOutput(content.payload || ''))
-          : formatPayload(content.payload || '')
+        const formattedPayload = deriveStepContent(content.payload)
         const stepStatus: ThinkingStep['status'] =
           status === 'error' ? 'error' : status === 'complete' ? 'success' : 'running'
         const argSummary = getToolArgSummary(functionName, splitPayload(content.payload || '').input)
