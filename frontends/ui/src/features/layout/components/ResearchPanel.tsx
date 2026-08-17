@@ -181,7 +181,7 @@ export const ResearchPanel: FC<ResearchPanelProps> = memo(function ResearchPanel
         disabled={!isAuthenticated}
         className={`research-panel-toggle border-base bg-surface-base relative z-10 flex w-10 shrink-0 items-center justify-center self-start overflow-hidden rounded-bl-lg border-b border-l border-r border-t transition-colors ${
           isAuthenticated
-            ? 'cursor-pointer hover:border-[#76B900]'
+            ? 'cursor-pointer hover:border-brand'
             : 'cursor-not-allowed opacity-50'
         }`}
         style={{ height: 'calc(var(--spacing) * 38)' }}
