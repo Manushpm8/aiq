@@ -221,7 +221,9 @@ export const ResearchPanel: FC<ResearchPanelProps> = memo(function ResearchPanel
 
       {}
       <div
-        className="border-base bg-surface-base -ml-px h-full flex-1 overflow-hidden rounded-bl-xl"
+        className={`border-base bg-surface-base -ml-px h-full flex-1 overflow-hidden rounded-bl-xl ${
+          isOpen ? 'border-l' : ''
+        }`}
         aria-hidden={!isOpen}
       >
         {}

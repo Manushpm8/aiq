@@ -131,7 +131,7 @@ export const ReportTab: FC<ReportTabProps> = ({ children }) => {
             type="button"
             onClick={() => setShowFiles((v) => !v)}
             aria-expanded={showFiles}
-            className="text-secondary hover:text-primary flex items-center gap-1.5 self-start transition-colors"
+            className="text-secondary hover:text-primary flex cursor-pointer items-center gap-1.5 self-start transition-colors"
           >
             <Document className="h-4 w-4" aria-hidden="true" />
             <Text kind="body/regular/sm">Generated files ({deepResearchFiles.length})</Text>

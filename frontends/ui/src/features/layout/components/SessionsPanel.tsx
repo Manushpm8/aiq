@@ -29,7 +29,6 @@ import { useShallow } from 'zustand/react/shallow'
 import {
   Chat,
   ChatMessage,
-  ChevronLeft,
   Close,
   DocumentCheckmark,
   Edit,
@@ -253,26 +252,25 @@ export const SessionsPanel: FC<SessionsPanelProps> = memo(function SessionsPanel
               onClick={toggleSidebar}
               aria-label="Expand sessions sidebar"
               title="Expand sessions"
-              className="hover:bg-surface-raised-50 grid h-10 w-10 place-items-center rounded-lg"
+              className="hover:bg-surface-raised-50 grid h-10 w-10 cursor-pointer place-items-center rounded-lg"
             >
               <Menu className="text-secondary h-5 w-5" />
             </button>
           </Flex>
         ) : (
           <Flex align="center" gap="3" className="h-10 px-3">
-            <Menu className="text-secondary h-5 w-5 shrink-0" />
-            <Text kind="label/semibold/md" className="text-primary flex-1 truncate">
-              Sessions
-            </Text>
             <button
               type="button"
               onClick={toggleSidebar}
               aria-label="Collapse sessions sidebar"
               title="Collapse sessions"
-              className="hover:bg-surface-raised-50 grid h-7 w-7 shrink-0 place-items-center rounded-md"
+              className="hover:bg-surface-raised-50 grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-md"
             >
-              <ChevronLeft className="text-secondary h-4 w-4" />
+              <Menu className="text-secondary h-5 w-5" />
             </button>
+            <Text kind="label/semibold/md" className="text-primary flex-1 truncate">
+              Sessions
+            </Text>
           </Flex>
         )}
 
@@ -321,7 +319,7 @@ export const SessionsPanel: FC<SessionsPanelProps> = memo(function SessionsPanel
                   onClick={clearSearch}
                   aria-label="Clear search"
                   title="Clear search"
-                  className="text-subtle hover:text-primary grid h-5 w-5 shrink-0 place-items-center"
+                  className="text-subtle hover:text-primary grid h-5 w-5 shrink-0 cursor-pointer place-items-center"
                 >
                   <Close className="h-4 w-4" />
                 </button>
@@ -626,7 +624,11 @@ const SessionItem: FC<SessionItemProps> = ({
             <SessionStatusIcon session={session} isSessionActive={isSessionActive} />
           </span>
 
-          <Text kind="body/regular/sm" className="text-primary min-w-0 flex-1 truncate">
+          <Text
+            kind="body/regular/sm"
+            title={session.title}
+            className="text-primary min-w-0 flex-1 truncate"
+          >
             {session.title}
           </Text>
 
