@@ -189,4 +189,29 @@ describe('deepResearchToThinkingSteps', () => {
     expect(orphan).toBeDefined()
     expect(orphan?.isTopLevel).toBe(true)
   })
+
+  test('an agent whose input is a prompt/messages dump gets no arg summary', () => {
+    const dump =
+      "messages=[SystemMessage(content='You are a research agent'), " +
+      "HumanMessage(content='A gene is a segment of DNA; a genome is the full set. Compare them.')]"
+    const steps = deepResearchToThinkingSteps([agent({ id: 'a1', name: 'researcher', input: dump })], [])
+    const head = steps.find((s) => s.id === 'a1')
+    expect(head?.argSummary).toBeUndefined()
+  })
+
+  test('an agent whose input is a JSON prompt dump gets no arg summary', () => {
+    const dump = '{"role": "system", "instruction": "Summarize the prior Gene vs Genome answer."}'
+    const steps = deepResearchToThinkingSteps([agent({ id: 'a1', name: 'planner', input: dump })], [])
+    const head = steps.find((s) => s.id === 'a1')
+    expect(head?.argSummary).toBeUndefined()
+  })
+
+  test('an agent whose input is a short clean task keeps it as the arg summary', () => {
+    const steps = deepResearchToThinkingSteps(
+      [agent({ id: 'a1', name: 'researcher', input: 'Research NVDA 5-year stock growth' })],
+      []
+    )
+    const head = steps.find((s) => s.id === 'a1')
+    expect(head?.argSummary).toBe('Research NVDA 5-year stock growth')
+  })
 })

@@ -213,6 +213,51 @@ describe('ChatThinking', () => {
     })
   })
 
+  describe('step body comes from argSummary', () => {
+    const PRIOR_ASSISTANT_ANSWER =
+      'A gene is a segment of DNA that codes for a protein, while a genome is the complete set of genetic material.'
+
+    test('renders a prior-answer body when a step still carries it as its arg summary (root cause)', () => {
+      render(
+        <ChatThinking
+          steps={[
+            createStep({ functionName: 'intent_classifier', argSummary: PRIOR_ASSISTANT_ANSWER, isTopLevel: true }),
+          ]}
+          embedded
+        />
+      )
+
+      expect(screen.getByText('Intent Classifier')).toBeInTheDocument()
+      expect(screen.getByText(PRIOR_ASSISTANT_ANSWER)).toBeInTheDocument()
+    })
+
+    test('a non-folded step with no arg summary shows its label but no history body', () => {
+      render(
+        <ChatThinking
+          steps={[createStep({ functionName: 'intent_classifier', argSummary: undefined, isTopLevel: true })]}
+          embedded
+        />
+      )
+
+      expect(screen.getByText('Intent Classifier')).toBeInTheDocument()
+      expect(screen.queryByText(PRIOR_ASSISTANT_ANSWER)).not.toBeInTheDocument()
+    })
+
+    test('a tool step still shows its query as the body', () => {
+      render(
+        <ChatThinking
+          steps={[
+            createStep({ functionName: 'web_search_tool', argSummary: 'top customers by revenue', isTopLevel: true }),
+          ]}
+          embedded
+        />
+      )
+
+      expect(screen.getByText('Searching the web')).toBeInTheDocument()
+      expect(screen.getByText('top customers by revenue')).toBeInTheDocument()
+    })
+  })
+
   describe('used sources and files', () => {
     test('surfaces a Using chip for a source the answer actually used', () => {
       render(

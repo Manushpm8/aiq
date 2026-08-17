@@ -22,9 +22,6 @@ type RunStatus = 'running' | 'complete' | 'error'
 const toStepStatus = (status: RunStatus): ThinkingStep['status'] =>
   status === 'error' ? 'error' : status === 'complete' ? 'success' : 'running'
 
-const truncate = (text: string, max = 120): string =>
-  text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
-
 const isExplanationTool = (name: string): boolean => /explain/i.test(name)
 
 const ms = (value: Date | string): number => new Date(value).getTime()
@@ -130,7 +127,7 @@ export const deepResearchToThinkingSteps = (
       completedAt: agent.completedAt,
       isComplete: agent.status !== 'running',
       status: toStepStatus(agent.status),
-      argSummary: input ? truncate(input) : undefined,
+      argSummary: getToolArgSummary(agent.name, input),
       isTopLevel: true,
       isDeepResearch: true,
     })

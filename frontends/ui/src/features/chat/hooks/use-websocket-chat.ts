@@ -58,13 +58,18 @@ import {
   extractFoldedOutput,
   splitPayload,
 } from '../lib/intermediate-step-parser'
-import { getToolArgSummary } from '@/shared/components/research'
+import { getToolArgSummary, isKnownTool } from '@/shared/components/research'
 
 const EMPTY_MESSAGES: ChatMessage[] = []
 const EMPTY_CONVERSATIONS: Conversation[] = []
 
 export const deriveStepContent = (payload: string): string =>
   formatPayload(extractFoldedOutput(payload || ''))
+
+export const deriveArgSummary = (functionName: string, payload: string): string | undefined =>
+  isKnownTool(functionName)
+    ? getToolArgSummary(functionName, splitPayload(payload || '').input)
+    : undefined
 
 /**
  * Structured async-job escalation signal parsed from a system_response `content` string.
@@ -846,7 +851,7 @@ export const useWebSocketChat = (options: UseWebSocketChatOptions = {}): UseWebS
         const formattedPayload = deriveStepContent(content.payload)
         const stepStatus: ThinkingStep['status'] =
           status === 'error' ? 'error' : status === 'complete' ? 'success' : 'running'
-        const argSummary = getToolArgSummary(functionName, splitPayload(content.payload || '').input)
+        const argSummary = deriveArgSummary(functionName, content.payload || '')
 
         // Check if we already have a step for this function
         const existingStep = findThinkingStepByFunctionName(functionName)
