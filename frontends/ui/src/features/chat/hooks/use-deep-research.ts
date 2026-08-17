@@ -28,6 +28,7 @@ import { useLayoutStore } from '@/features/layout/store'
 import { checkBackendHealthCached } from '@/shared/hooks/use-backend-health'
 import { isLikelyAuthRelatedTransportError, isDeepResearchReplayCompleteMode } from '../lib/transport-auth-signals'
 import { normalizeDeepResearchTodos } from '../lib/deep-research-todos'
+import { createResearchCorrelator, type ResearchCorrelator } from '../lib/deep-research-correlation'
 
 /** Timeout in milliseconds before showing a warning (60 seconds) */
 const TIMEOUT_WARNING_MS = 60000
@@ -140,8 +141,7 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
   const openRightPanel = useLayoutStore((s) => s.openRightPanel)
   const setResearchPanelTab = useLayoutStore((s) => s.setResearchPanelTab)
 
-  // Ref to track active thinking step IDs by name
-  const activeStepIdsRef = useRef<Map<string, string>>(new Map())
+  const correlatorRef = useRef<ResearchCorrelator | null>(null)
 
   /**
    * Reset the timeout tracker - called when we receive any live event.
@@ -191,7 +191,20 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
         clientRef.current = null
       }
 
-      activeStepIdsRef.current.clear()
+      const correlator = createResearchCorrelator({
+        hasUserMessage: () => Boolean(useChatStore.getState().currentUserMessageId),
+        addThinkingStep,
+        appendToThinkingStep,
+        completeThinkingStep,
+        addAgent: addDeepResearchAgentWithId,
+        completeAgent: completeDeepResearchAgent,
+        addToolCall: addDeepResearchToolCall,
+        completeToolCall: completeDeepResearchToolCall,
+        addLLMStep: addDeepResearchLLMStep,
+        appendLLMStep: appendToDeepResearchLLMStep,
+        completeLLMStep: completeDeepResearchLLMStep,
+      })
+      correlatorRef.current = correlator
       resetTimeout()
 
       // ---------- inline buffer for replay phase ----------
@@ -271,17 +284,11 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
         // (llm.end with usage, tool.end with output) can find them
         for (const id of buf.activeLLMStack) {
           const step = buf.llmSteps.get(id)
-          if (step) {
-            activeStepIdsRef.current.set(`llm:${step.name}`, id)
-            activeStepIdsRef.current.set(`llmStep:${step.name}`, id)
-          }
+          if (step) correlator.adoptLLMRun(undefined, step.name, { storeId: id })
         }
         for (const [name, stack] of buf.activeToolStacks) {
           const lastId = stack[stack.length - 1]
-          if (lastId) {
-            activeStepIdsRef.current.set(`tool:${name}`, lastId)
-            activeStepIdsRef.current.set(`toolCall:${name}`, lastId)
-          }
+          if (lastId) correlator.adoptToolRun(undefined, name, { storeId: lastId })
         }
         return true
       }
@@ -340,6 +347,7 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
                   deepResearchJobStatus: 'success',
                   isDeepResearchActive: false,
                   showViewReport: hasReport,
+                  responseCompletedAt: new Date(),
                 })
               }
               addDeepResearchBanner('success', jobId, ownerConvId || undefined, { totalTokens, toolCallCount })
@@ -360,6 +368,7 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
                   deepResearchJobStatus: status,
                   isDeepResearchActive: false,
                   showViewReport: hasReport,
+                  responseCompletedAt: new Date(),
                 })
               }
               addDeepResearchBanner(isUserCancelled ? 'cancelled' : 'failure', jobId, ownerConvId || undefined)
@@ -402,16 +411,10 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
             }
             if (!isActiveJob()) return
             resetTimeout()
-            const hasUserMsg = Boolean(useChatStore.getState().currentUserMessageId)
-            if (hasUserMsg) {
-              const stepId = addThinkingStep({ category: 'agents', functionName: name, displayName: name, content: input ? `Input: ${input}\n` : 'Starting...\n', isComplete: false, isDeepResearch: true })
-              activeStepIdsRef.current.set(name, stepId)
-            }
-            const createdId = addDeepResearchAgentWithId(id, { name, input })
-            activeStepIdsRef.current.set(`agent:${id}`, createdId)
+            correlator.onWorkflowStart(id, name, input)
           },
 
-          onWorkflowEnd: (name, output, _eventId, agentId) => {
+          onWorkflowEnd: (name, output, eventId, agentId) => {
             if (buf.active) {
               if (agentId) {
                 const agent = buf.agents.get(agentId)
@@ -427,25 +430,15 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
               return
             }
             if (!isActiveJob()) return
-            const stepId = activeStepIdsRef.current.get(name)
-            if (stepId) { if (output) appendToThinkingStep(stepId, `\nOutput: ${output}`); completeThinkingStep(stepId); activeStepIdsRef.current.delete(name) }
-            if (agentId) { completeDeepResearchAgent(agentId, output); activeStepIdsRef.current.delete(`agent:${agentId}`) }
+            correlator.onWorkflowEnd(agentId || eventId, name, output)
           },
 
-          onLLMStart: (name, workflow) => {
+          onLLMStart: (name, workflow, agentId) => {
             if (buf.active) {
               const id = `llm-${buf.idCounter++}`; buf.activeLLMStack.push(id); buf.llmSteps.set(id, { name, workflow, content: '' }); return
             }
             if (!isActiveJob()) return
-
-            const hasUserMsg = Boolean(useChatStore.getState().currentUserMessageId)
-            if (hasUserMsg) {
-              const displayName = workflow ? `${workflow} > ${name}` : name
-              const stepId = addThinkingStep({ category: 'agents', functionName: `llm:${name}`, displayName, content: 'Generating...\n', isComplete: false, isDeepResearch: true })
-              activeStepIdsRef.current.set(`llm:${name}`, stepId)
-            }
-            const llmStepId = addDeepResearchLLMStep({ name, workflow, content: '' })
-            activeStepIdsRef.current.set(`llmStep:${name}`, llmStepId)
+            correlator.onLLMStart(agentId, name, workflow)
           },
 
           onLLMChunk: (chunk) => {
@@ -454,21 +447,15 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
             }
             if (!isActiveJob()) return
             resetTimeout()
-            const llmStepId = Array.from(activeStepIdsRef.current.entries()).filter(([k]) => k.startsWith('llm:')).pop()?.[1]
-            if (llmStepId) appendToThinkingStep(llmStepId, chunk)
-            const llmStepKeys = Array.from(activeStepIdsRef.current.entries()).filter(([k]) => k.startsWith('llmStep:'))
-            if (llmStepKeys.length > 0) appendToDeepResearchLLMStep(llmStepKeys[llmStepKeys.length - 1][1], chunk)
+            correlator.onLLMChunk(chunk)
           },
 
-          onLLMEnd: (_output, thinking, usage) => {
+          onLLMEnd: (_output, thinking, usage, name, agentId) => {
             if (buf.active) {
               const id = buf.activeLLMStack.pop(); if (id) { const s = buf.llmSteps.get(id); if (s) { s.thinking = thinking; s.usage = usage } }; return
             }
             if (!isActiveJob()) return
-            const llmSteps = Array.from(activeStepIdsRef.current.entries()).filter(([k]) => k.startsWith('llm:'))
-            if (llmSteps.length > 0) { const [key, stepId] = llmSteps[llmSteps.length - 1]; if (thinking) appendToThinkingStep(stepId, `\n\nThinking: ${thinking}`); completeThinkingStep(stepId); activeStepIdsRef.current.delete(key) }
-            const llmStepKeys = Array.from(activeStepIdsRef.current.entries()).filter(([k]) => k.startsWith('llmStep:'))
-            if (llmStepKeys.length > 0) { const [key, llmStepId] = llmStepKeys[llmStepKeys.length - 1]; completeDeepResearchLLMStep(llmStepId, thinking, usage); activeStepIdsRef.current.delete(key) }
+            correlator.onLLMEnd(agentId, name, thinking, usage)
           },
 
           onToolStart: (name, input, workflow, _eventId, agentId, isSandbox) => {
@@ -479,26 +466,16 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
             }
             if (!isActiveJob()) return
             resetTimeout(); setCurrentStatus('searching')
-            const hasUserMsg = Boolean(useChatStore.getState().currentUserMessageId)
-            if (hasUserMsg) {
-              const inputText = input ? ('_raw' in input && typeof input._raw === 'string' ? input._raw : JSON.stringify(input, null, 2)) : null
-              const stepId = addThinkingStep({ category: 'tools', functionName: name, displayName: name, content: inputText ? `Input: ${inputText}\n` : 'Executing...\n', isComplete: false, isDeepResearch: true })
-              activeStepIdsRef.current.set(`tool:${name}`, stepId)
-            }
-            const toolCallId = addDeepResearchToolCall({ name, input, workflow, agentId, isSandbox })
-            activeStepIdsRef.current.set(`toolCall:${name}`, toolCallId)
+            correlator.onToolStart(agentId, name, input, workflow, isSandbox)
           },
 
-          onToolEnd: (name, output) => {
+          onToolEnd: (name, output, _eventId, agentId) => {
             if (name === 'task') return
             if (buf.active) {
               const stack = buf.activeToolStacks.get(name); const id = stack?.pop(); if (id) { const t = buf.toolCalls.get(id); if (t) t.output = output ? JSON.stringify(output) : undefined }; return
             }
             if (!isActiveJob()) return
-            const stepId = activeStepIdsRef.current.get(`tool:${name}`)
-            if (stepId) { if (output) { const truncated = output.length > 500 ? output.substring(0, 500) + '...' : output; appendToThinkingStep(stepId, `\nOutput: ${truncated}`) }; completeThinkingStep(stepId); activeStepIdsRef.current.delete(`tool:${name}`) }
-            const toolCallId = activeStepIdsRef.current.get(`toolCall:${name}`)
-            if (toolCallId) { completeDeepResearchToolCall(toolCallId, output); activeStepIdsRef.current.delete(`toolCall:${name}`) }
+            correlator.onToolEnd(agentId, name, output)
             setCurrentStatus('researching')
           },
 
@@ -584,6 +561,7 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
                   deepResearchJobStatus: 'failure',
                   isDeepResearchActive: false,
                   showViewReport: hasReport,
+                  responseCompletedAt: new Date(),
                 })
               }
 
@@ -676,6 +654,7 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
             deepResearchJobStatus: 'interrupted',
             isDeepResearchActive: false,
             showViewReport: hasReport,
+            responseCompletedAt: new Date(),
           })
         }
         addDeepResearchBanner('cancelled', cancelledJobId, ownerConvId || undefined)

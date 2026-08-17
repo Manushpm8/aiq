@@ -137,6 +137,49 @@ describe('ChatThinking', () => {
       expect(duration).toHaveTextContent('0:05')
       expect(duration.textContent).not.toMatch(/\d+:\d\d:\d\d/)
     })
+
+    test('a multi-minute deep-research job shows the real duration from the terminal timestamp', () => {
+      const started = new Date('2024-01-15T14:30:00')
+      const step = createStep({
+        functionName: 'web_search_tool',
+        timestamp: started,
+        completedAt: new Date('2024-01-15T14:30:02'),
+      })
+
+      render(
+        <ChatThinking
+          steps={[step]}
+          isThinking={false}
+          responseStartedAt={started}
+          responseCompletedAt={new Date('2024-01-15T14:35:00')}
+        />
+      )
+
+      const duration = screen.getByLabelText('Total response time')
+      expect(duration).toHaveTextContent('5:00')
+      expect(duration.textContent).not.toBe('0:02')
+    })
+
+    test('a still-running job shows no bogus completed duration', () => {
+      const started = new Date('2024-01-15T14:30:00')
+      const step = createStep({
+        functionName: 'web_search_tool',
+        timestamp: started,
+        completedAt: new Date('2024-01-15T14:30:02'),
+      })
+
+      render(
+        <ChatThinking
+          steps={[step]}
+          isThinking
+          responseStartedAt={started}
+        />
+      )
+
+      const duration = screen.getByLabelText('Total response time')
+      expect(duration.textContent).not.toBe('0:02')
+      expect(duration.textContent).toMatch(/\d+:\d\d:\d\d/)
+    })
   })
 
   describe('dedupeNestedToolSteps', () => {

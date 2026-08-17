@@ -301,7 +301,9 @@ export const ChatArea: FC<ChatAreaProps> = memo(function ChatArea({
                         messageFiles={userMessage.messageFiles}
                         model={userMessage.selectedModel}
                         responseStartedAt={userMessage.timestamp}
-                        responseCompletedAt={completedResponse?.timestamp}
+                        responseCompletedAt={
+                          completedResponse?.responseCompletedAt ?? completedResponse?.timestamp
+                        }
                       />
                     )}
 

@@ -141,6 +141,8 @@ export interface ChatMessage {
   deepResearchBannerData?: DeepResearchBannerData
   /** Whether to show "View Report" button on agent responses */
   showViewReport?: boolean
+  /** Real completion timestamp for a deep research turn, recorded when the terminal job event arrives (start timestamp stays in `timestamp`) */
+  responseCompletedAt?: Date
 
   // Session persistence fields (embedded in messages for localStorage persistence)
 

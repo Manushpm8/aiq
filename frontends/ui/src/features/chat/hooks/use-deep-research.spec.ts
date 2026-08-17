@@ -639,6 +639,41 @@ describe('useDeepResearch', () => {
       )
     })
 
+    test('records a real responseCompletedAt only when the terminal event arrives', async () => {
+      await setupConnectedHook({
+        reportContent: 'Test report',
+        activeDeepResearchMessageId: 'msg-dur',
+      })
+
+      vi.mocked(useChatStore).getState = vi.fn(() => ({
+        ...mockStoreState,
+        reportContent: 'Test report',
+        deepResearchLLMSteps: [],
+        deepResearchToolCalls: [],
+        deepResearchCitations: [],
+        addErrorCard: mockAddErrorCard,
+        deepResearchOwnerConversationId: 'test-conv-123',
+        activeDeepResearchMessageId: 'msg-dur',
+      })) as unknown as typeof useChatStore.getState
+
+      act(() => {
+        mockClient?.callbacks.onWorkflowStart?.('researcher-agent', 'query', 'event-1', 'agent-1')
+      })
+
+      const midRunPatch = mockPatchConversationMessage.mock.calls.find(
+        ([, , patch]) => (patch as Record<string, unknown>).responseCompletedAt !== undefined
+      )
+      expect(midRunPatch).toBeUndefined()
+
+      act(() => {
+        mockClient?.callbacks.onJobStatus?.('success', undefined)
+      })
+
+      const terminalPatch = mockPatchConversationMessage.mock.calls.at(-1)?.[2] as Record<string, unknown>
+      expect(terminalPatch.deepResearchJobStatus).toBe('success')
+      expect(terminalPatch.responseCompletedAt).toBeInstanceOf(Date)
+    })
+
     test('onJobStatus failure stops todos and shows error', async () => {
       await setupConnectedHook()
 
