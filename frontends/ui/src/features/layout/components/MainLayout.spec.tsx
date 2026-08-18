@@ -100,6 +100,10 @@ vi.mock('./DataSourcesPanel', () => ({
   DataSourcesPanel: () => <div data-testid="data-sources-panel">Data Sources Panel</div>,
 }))
 
+vi.mock('./DeepResearchRail', () => ({
+  DeepResearchRail: () => <div data-testid="deep-research-rail">Deep Research Rail</div>,
+}))
+
 import { useChatStore } from '@/features/chat'
 
 describe('MainLayout', () => {
@@ -116,6 +120,7 @@ describe('MainLayout', () => {
     expect(screen.getByTestId('input-area')).toBeInTheDocument()
     expect(screen.getByTestId('research-panel')).toBeInTheDocument()
     expect(screen.getByTestId('data-sources-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('deep-research-rail')).toBeInTheDocument()
   })
 
   test('hides the sessions sidebar and data sources panel when unauthenticated', () => {
@@ -127,6 +132,7 @@ describe('MainLayout', () => {
     expect(screen.getByTestId('input-area')).toBeInTheDocument()
     expect(screen.getByTestId('research-panel')).toBeInTheDocument()
     expect(screen.queryByTestId('data-sources-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('deep-research-rail')).toBeInTheDocument()
   })
 
   test('passes session title to AppBar', () => {
@@ -224,5 +230,13 @@ describe('MainLayout', () => {
 
     const centerColumn = screen.getByTestId('chat-area').parentElement
     expect(centerColumn).toHaveClass('flex-1')
+  })
+
+  test('chat region keeps a usable minimum width so panels cannot crush it', () => {
+    render(<MainLayout isAuthenticated={true} />)
+
+    const centerColumn = screen.getByTestId('chat-area').parentElement
+    expect(centerColumn).toHaveClass('min-w-[360px]')
+    expect(centerColumn).not.toHaveClass('min-w-0')
   })
 })
