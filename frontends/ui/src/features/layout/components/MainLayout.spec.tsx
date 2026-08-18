@@ -97,7 +97,13 @@ vi.mock('./ResearchPanel', () => ({
 }))
 
 vi.mock('./DataSourcesPanel', () => ({
-  DataSourcesPanel: () => <div data-testid="data-sources-panel">Data Sources Panel</div>,
+  DataSourcesPanel: () => (
+    <div data-testid="data-sources-panel">
+      <button type="button" aria-label="Close data sources panel">
+        Close
+      </button>
+    </div>
+  ),
 }))
 
 vi.mock('./DeepResearchRail', () => ({
@@ -232,11 +238,33 @@ describe('MainLayout', () => {
     expect(centerColumn).toHaveClass('flex-1')
   })
 
-  test('chat region keeps a usable minimum width so panels cannot crush it', () => {
-    render(<MainLayout isAuthenticated={true} />)
+  test('keeps the Deep Research rail and Data Sources close control reachable at 1024px instead of clipping them off-screen', () => {
+    const originalInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+    try {
+      render(<MainLayout isAuthenticated={true} />)
 
-    const centerColumn = screen.getByTestId('chat-area').parentElement
-    expect(centerColumn).toHaveClass('min-w-[360px]')
-    expect(centerColumn).not.toHaveClass('min-w-0')
+      const contentRow = screen.getByTestId('main-content-row')
+      const rail = screen.getByTestId('deep-research-rail')
+      const closeControl = screen.getByRole('button', { name: 'Close data sources panel' })
+
+      expect(contentRow).toContainElement(rail)
+      expect(contentRow).toContainElement(closeControl)
+
+      expect(contentRow.className).toMatch(/overflow-x-auto/)
+      expect(contentRow.className).not.toMatch(/overflow-hidden/)
+
+      Object.defineProperty(contentRow, 'clientWidth', { configurable: true, value: 1024 })
+      Object.defineProperty(contentRow, 'scrollWidth', { configurable: true, value: 1240 })
+      expect(contentRow.scrollWidth).toBeGreaterThan(contentRow.clientWidth)
+
+      contentRow.scrollLeft = contentRow.scrollWidth - contentRow.clientWidth
+      expect(contentRow.scrollLeft).toBeGreaterThan(0)
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalInnerWidth,
+      })
+    }
   })
 })

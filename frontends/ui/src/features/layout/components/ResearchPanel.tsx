@@ -9,119 +9,89 @@
  *   - research  -> ReportTab (report + Markdown/PDF export footer)
  *   - thinking  -> ThinkingTab (reasoning/steps trace) with the workflow Task
  *                  progress folded in as a disclosure above it
- *   - citations -> the report's cited sources (SourceStrip)
- *   - artifacts -> the generated files/artifacts list (FileCard)
+ *   - citations -> every source the agent touched (ResearchSourcesView)
  *
- * Data Sources is handled by its own DataSourcesPanel; the four items above and
+ * Data Sources is handled by its own DataSourcesPanel; the three items above and
  * Data Sources are mutually exclusive via the shared rightPanel slot, so only
- * one panel is ever open. This panel PUSHES the chat area rather than overlaying.
+ * one panel is ever open. This panel PUSHES the chat area rather than overlaying
+ * and exposes a drag/keyboard resize grip on its left (chat-facing) edge.
  */
 
 'use client'
 
-import { type FC, type ReactNode, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type FC,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 import { Flex, Button, Spinner, Text } from '@/adapters/ui'
-import { CheckCircle, ChevronDown, Close, DocumentCheckmark, Image as ImageIcon, StopCircle } from '@/adapters/ui/icons'
+import { CheckCircle, ChevronDown, Close, StopCircle } from '@/adapters/ui/icons'
 import { cancelJob } from '@/adapters/api'
 import { useShallow } from 'zustand/react/shallow'
 import { cn } from '@/shared/lib/cn'
 import { useChatStore, useLoadJobData, selectResolvedDeepResearchJobId } from '@/features/chat'
 import { useAuth } from '@/adapters/auth'
 import { useReducedMotion } from '@/hooks/use-reduced-motion'
-import { SourceStrip } from '@/shared/components/Sources/SourceStrip'
-import { mapCitationSource } from '@/shared/components/Sources/source-utils'
-import { splitReferences } from '@/shared/components/Sources/parse-references'
 import { useLayoutStore } from '../store'
 import { TasksTab } from './TasksTab'
 import { ThinkingTab } from './ThinkingTab'
 import { ReportTab } from './ReportTab'
-import { FileCard } from './FileCard'
+import { ResearchSourcesView } from './ResearchSourcesView'
 import { getRailPanelLabel } from './DeepResearchRail'
 import type { RightPanelType } from '../types'
 
 /** Rail panels rendered by this component (Data Sources lives in its own panel). */
-const PANEL_TABS = new Set<RightPanelType>(['research', 'thinking', 'citations', 'artifacts'])
+const PANEL_TABS = new Set<RightPanelType>(['research', 'thinking', 'citations'])
 
-/** Panels that read replayed stream data (citations, files, steps). */
-const STREAM_BACKED_TABS = new Set<RightPanelType>(['thinking', 'citations', 'artifacts'])
+/** Panels that read replayed stream data (citations, steps). */
+const STREAM_BACKED_TABS = new Set<RightPanelType>(['thinking', 'citations'])
 
 /** Wide panels get more room for their rich content. */
 const WIDE_TABS = new Set<RightPanelType>(['research', 'thinking'])
 
+/** Minimum open width per panel class (px). */
+const WIDE_MIN_WIDTH = 480
+const NARROW_MIN_WIDTH = 420
+
+/** Upper bounds so a resized panel never covers the whole viewport. */
+const MAX_WIDTH_PX = 900
+const MAX_WIDTH_VW_RATIO = 0.7
+
+/** Nudge step for keyboard resize (px). */
+const KEYBOARD_STEP_PX = 24
+
+/** Width used as the drag/keyboard start when the live panel size is unknown. */
+export const FALLBACK_WIDE_WIDTH = 640
+
 /** Fallback timeout: if the SSE stream doesn't deliver the interrupted
  *  status within this window after cancel, clean up the UI optimistically. */
 const CANCEL_FALLBACK_TIMEOUT_MS = 5000
+
+/** Largest allowed width for the current viewport. */
+const getMaxWidth = (): number => {
+  if (typeof window === 'undefined') return MAX_WIDTH_PX
+  return Math.min(MAX_WIDTH_PX, Math.round(window.innerWidth * MAX_WIDTH_VW_RATIO))
+}
+
+/** Clamp a proposed width to the active panel's [min, max] range. */
+const clampPanelWidth = (px: number, wide: boolean): number => {
+  const min = wide ? WIDE_MIN_WIDTH : NARROW_MIN_WIDTH
+  const max = getMaxWidth()
+  const lo = Math.min(min, max)
+  return Math.max(lo, Math.min(Math.round(px), max))
+}
 
 interface ResearchPanelProps {
   /** Content to display in the report view */
   children?: ReactNode
   /** Whether the user is authenticated */
   isAuthenticated?: boolean
-}
-
-/**
- * Report's cited sources, reusing the same data the report renders: parsed
- * trailing references when present, otherwise the deep-research citations.
- */
-const CitationsView: FC = () => {
-  const { reportContent, deepResearchCitations } = useChatStore(
-    useShallow((s) => ({
-      reportContent: s.reportContent,
-      deepResearchCitations: s.deepResearchCitations,
-    }))
-  )
-
-  const sources = useMemo(() => {
-    const reportContentStr = typeof reportContent === 'string' ? reportContent : ''
-    const split = splitReferences(reportContentStr)
-    if (split.sources.length > 0) return split.sources
-    return (deepResearchCitations ?? []).map(mapCitationSource)
-  }, [reportContent, deepResearchCitations])
-
-  if (sources.length === 0) {
-    return (
-      <Flex direction="col" align="center" justify="center" className="h-full py-8 text-center">
-        <DocumentCheckmark className="text-subtle mb-3 h-8 w-8" />
-        <Text kind="body/regular/md" className="text-subtle">
-          Cited sources will appear here.
-        </Text>
-      </Flex>
-    )
-  }
-
-  return (
-    <div className="h-full overflow-y-auto">
-      <SourceStrip sources={sources} />
-    </div>
-  )
-}
-
-/**
- * Generated artifacts/files produced by the deep-research flow.
- */
-const ArtifactsView: FC = () => {
-  const deepResearchFiles = useChatStore((s) => s.deepResearchFiles)
-
-  if (!deepResearchFiles || deepResearchFiles.length === 0) {
-    return (
-      <Flex direction="col" align="center" justify="center" className="h-full py-8 text-center">
-        <ImageIcon className="text-subtle mb-3 h-8 w-8" />
-        <Text kind="body/regular/md" className="text-subtle">
-          Artifacts will appear here.
-        </Text>
-      </Flex>
-    )
-  }
-
-  return (
-    <Flex direction="col" gap="2" className="h-full overflow-y-auto">
-      {deepResearchFiles.map((file) => (
-        <div key={file.id} className="shrink-0">
-          <FileCard file={file} />
-        </div>
-      ))}
-    </Flex>
-  )
 }
 
 /**
@@ -190,6 +160,11 @@ export const ResearchPanel: FC<ResearchPanelProps> = memo(function ResearchPanel
   const cancelFallbackRef = useRef<NodeJS.Timeout | null>(null)
   const loadKeyRef = useRef<string | null>(null)
 
+  const panelRef = useRef<HTMLDivElement>(null)
+  const resizeStartRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const [panelWidth, setPanelWidth] = useState<number | null>(null)
+  const [isResizing, setIsResizing] = useState(false)
+
   useEffect(() => {
     return () => {
       if (cancelFallbackRef.current) {
@@ -200,7 +175,11 @@ export const ResearchPanel: FC<ResearchPanelProps> = memo(function ResearchPanel
   }, [])
 
   useEffect(() => {
-    if (!isAuthenticated || !isOpen || !deepResearchJobId || isStreamLoading) return
+    if (!isOpen) {
+      loadKeyRef.current = null
+      return
+    }
+    if (!isAuthenticated || !deepResearchJobId || isStreamLoading) return
     const key = `${rightPanel}:${deepResearchJobId}`
     if (loadKeyRef.current === key) return
     loadKeyRef.current = key
@@ -261,22 +240,131 @@ export const ResearchPanel: FC<ResearchPanelProps> = memo(function ResearchPanel
   }, [deepResearchJobId, idToken])
 
   const isWide = WIDE_TABS.has(rightPanel)
-  const openWidth = isWide ? 'calc(60%)' : '420px'
   const panelLabel = getRailPanelLabel(rightPanel)
+  const minWidth = isWide ? WIDE_MIN_WIDTH : NARROW_MIN_WIDTH
+
+  useEffect(() => {
+    setPanelWidth((current) => (current == null ? current : clampPanelWidth(current, isWide)))
+  }, [isWide])
+
+  useEffect(() => {
+    const reclampToViewport = () => {
+      setPanelWidth((current) => (current == null ? current : clampPanelWidth(current, isWide)))
+    }
+    window.addEventListener('resize', reclampToViewport)
+    return () => window.removeEventListener('resize', reclampToViewport)
+  }, [isWide])
+
+  const measuredWidth = useCallback((): number => {
+    if (panelWidth != null) return panelWidth
+    const rect = panelRef.current?.getBoundingClientRect()
+    if (rect && rect.width > 0) return Math.round(rect.width)
+    return isWide ? FALLBACK_WIDE_WIDTH : NARROW_MIN_WIDTH
+  }, [panelWidth, isWide])
+
+  const applyWidth = useCallback(
+    (px: number) => {
+      setPanelWidth(clampPanelWidth(px, isWide))
+    },
+    [isWide]
+  )
+
+  const handleResizePointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return
+      resizeStartRef.current = { startX: e.clientX, startWidth: measuredWidth() }
+      e.currentTarget.setPointerCapture?.(e.pointerId)
+      setIsResizing(true)
+    },
+    [measuredWidth]
+  )
+
+  const handleResizePointerMove = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      const start = resizeStartRef.current
+      if (!start) return
+      applyWidth(start.startWidth + (start.startX - e.clientX))
+    },
+    [applyWidth]
+  )
+
+  const handleResizePointerUp = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!resizeStartRef.current) return
+    resizeStartRef.current = null
+    e.currentTarget.releasePointerCapture?.(e.pointerId)
+    setIsResizing(false)
+  }, [])
+
+  const handleResizeKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        applyWidth(measuredWidth() + KEYBOARD_STEP_PX)
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        applyWidth(measuredWidth() - KEYBOARD_STEP_PX)
+      }
+    },
+    [applyWidth, measuredWidth]
+  )
+
+  const maxWidth = getMaxWidth()
+  const currentPanelWidth = clampPanelWidth(panelWidth ?? measuredWidth(), isWide)
+
+  const openWidth =
+    panelWidth != null
+      ? `${clampPanelWidth(panelWidth, isWide)}px`
+      : isWide
+        ? `min(60%, ${MAX_WIDTH_PX}px, ${Math.round(MAX_WIDTH_VW_RATIO * 100)}vw)`
+        : `${NARROW_MIN_WIDTH}px`
 
   return (
     <div
+      ref={panelRef}
       data-testid="research-panel"
-      className={cn('border-base bg-surface-base h-full shrink-0 overflow-hidden', isOpen && 'border-l')}
+      className={cn(
+        'border-base bg-surface-base relative h-full shrink-0 overflow-hidden',
+        isOpen && 'border-l',
+        isResizing && 'select-none'
+      )}
       style={{
         width: isOpen ? openWidth : '0px',
-        minWidth: isOpen ? (isWide ? '480px' : '420px') : '0px',
-        transition: prefersReducedMotion
-          ? 'none'
-          : 'width 400ms ease-in-out, min-width 400ms ease-in-out',
+        minWidth: isOpen ? `${minWidth}px` : '0px',
+        transition:
+          prefersReducedMotion || isResizing
+            ? 'none'
+            : 'width 400ms ease-in-out, min-width 400ms ease-in-out',
       }}
       aria-hidden={!isOpen}
     >
+      {isOpen && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize panel"
+          aria-valuenow={currentPanelWidth}
+          aria-valuemin={Math.min(minWidth, maxWidth)}
+          aria-valuemax={maxWidth}
+          tabIndex={0}
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerUp}
+          onPointerCancel={handleResizePointerUp}
+          onKeyDown={handleResizeKeyDown}
+          data-testid="research-panel-resize"
+          className="group focus-visible:ring-brand absolute left-0 top-0 z-10 flex h-full w-3 cursor-col-resize touch-none select-none items-center justify-center outline-none focus-visible:ring-2 focus-visible:ring-inset"
+        >
+          <span
+            aria-hidden="true"
+            className="text-subtle group-hover:text-secondary flex flex-col items-center justify-center gap-1 transition-colors"
+          >
+            <span className="h-1 w-1 rounded-full bg-current" />
+            <span className="h-1 w-1 rounded-full bg-current" />
+            <span className="h-1 w-1 rounded-full bg-current" />
+            <span className="h-1 w-1 rounded-full bg-current" />
+          </span>
+        </div>
+      )}
       <Flex
         direction="col"
         className="h-full w-full"
@@ -301,17 +389,24 @@ export const ResearchPanel: FC<ResearchPanelProps> = memo(function ResearchPanel
           </Text>
           <Flex align="center" gap="2">
             {isDeepResearchStreaming && (
-              <Button
-                kind="tertiary"
-                size="small"
-                onClick={handleStopResearch}
-                aria-label="Stop researching"
-                title="Stop researching"
-                data-testid="research-panel-stop"
-              >
-                <StopCircle className="mr-2 h-4 w-4" aria-hidden="true" />
-                Stop Researching
-              </Button>
+              <>
+                <Button
+                  kind="tertiary"
+                  size="small"
+                  onClick={handleStopResearch}
+                  aria-label="Stop researching"
+                  title="Stop researching"
+                  data-testid="research-panel-stop"
+                >
+                  <StopCircle className="mr-2 h-4 w-4" aria-hidden="true" />
+                  Stop Researching
+                </Button>
+                <span
+                  aria-hidden="true"
+                  data-testid="research-panel-header-divider"
+                  className="border-base ml-1 h-5 border-l"
+                />
+              </>
             )}
             <Button
               kind="tertiary"
@@ -340,9 +435,7 @@ export const ResearchPanel: FC<ResearchPanelProps> = memo(function ResearchPanel
           ) : rightPanel === 'thinking' ? (
             <ThinkingView />
           ) : rightPanel === 'citations' ? (
-            <CitationsView />
-          ) : rightPanel === 'artifacts' ? (
-            <ArtifactsView />
+            <ResearchSourcesView />
           ) : null}
         </Flex>
       </Flex>

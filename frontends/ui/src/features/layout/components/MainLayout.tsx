@@ -179,7 +179,10 @@ export const MainLayout: FC<MainLayoutProps> = ({
       />
 
       {/* Main content area: in-flow panels reflow the center column (push, not overlay) */}
-      <div className="relative flex flex-1 overflow-hidden">
+      <div
+        data-testid="main-content-row"
+        className="relative flex flex-1 overflow-x-auto overflow-y-hidden"
+      >
         {/* Sessions Panel (Left) - collapsible push rail, only when authenticated */}
         {isAuthenticated && (
           <SessionsPanel
