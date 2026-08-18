@@ -3,85 +3,71 @@
 
 'use client'
 
-import { type ReactNode, useState } from 'react'
-import { Card } from '@/shared/components/Surface/Card'
+import { type ReactNode } from 'react'
 import { cn } from '@/shared/lib/cn'
 import { SourceKindIcon } from './SourceKindIcon'
 import type { SourceRef } from './types'
 
-interface SourceCardProps {
+interface SourceRowProps {
   source: SourceRef
 }
 
 /**
- * One source rendered as a typed card: title, an origin icon + label, and the
- * citation index. Becomes a link when the source has a real URL.
+ * One source rendered as a compact row: an origin icon, its title, a subtle
+ * domain, and the citation index. Becomes a link when the source has a real URL,
+ * opening it in a new tab.
  */
-export function SourceCard({ source }: SourceCardProps): ReactNode {
-  const body = (
-    <Card
-      tone={source.kind}
-      className="hover:bg-surface-sunken flex h-full flex-col gap-2 p-3 transition-colors"
-    >
-      <p className="text-primary line-clamp-2 text-sm">{source.title}</p>
-      <div className="text-subtle mt-auto flex items-center justify-between text-xs">
-        <span className="text-secondary flex min-w-0 items-center gap-1.5">
-          <SourceKindIcon kind={source.kind} />
-          <span className="truncate">{source.label}</span>
-        </span>
-        <span aria-hidden="true">[{source.index}]</span>
-      </div>
-    </Card>
+function SourceRow({ source }: SourceRowProps): ReactNode {
+  const showLabel = Boolean(source.label) && source.label !== source.title
+  const inner = (
+    <>
+      <span className="text-subtle mt-0.5 shrink-0">
+        <SourceKindIcon kind={source.kind} className="h-3.5 w-3.5" />
+      </span>
+      <span className="text-primary min-w-0 flex-1 truncate text-sm">{source.title}</span>
+      {showLabel && <span className="text-subtle shrink-0 text-xs">{source.label}</span>}
+      <span className="text-subtle shrink-0 text-xs" aria-hidden="true">
+        [{source.index}]
+      </span>
+    </>
   )
   if (source.url) {
     return (
-      <a href={source.url} target="_blank" rel="noopener noreferrer" className="block no-underline">
-        {body}
+      <a
+        href={source.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-secondary hover:bg-surface-sunken hover:text-primary flex items-baseline gap-2 rounded-md px-2 py-1.5 no-underline transition-colors"
+      >
+        {inner}
       </a>
     )
   }
-  return body
+  return <div className="text-secondary flex items-baseline gap-2 px-2 py-1.5">{inner}</div>
 }
 
 interface SourceStripProps {
   sources: SourceRef[]
-  /** How many cards to show before the "+N more" expander. */
-  previewCount?: number
   className?: string
 }
 
 /**
- * Answer-attached strip of typed source cards. Shows a preview, then expands in
- * place to reveal the rest, keeping sources present but subordinate to the answer.
+ * Report-attached list of cited sources. Renders every source as a compact row
+ * so the full list stays scannable instead of hiding most of it behind a "more"
+ * control; the parent panel scrolls when the list is long.
  */
-export function SourceStrip({ sources, previewCount = 4, className }: SourceStripProps): ReactNode {
-  const [expanded, setExpanded] = useState(false)
+export function SourceStrip({ sources, className }: SourceStripProps): ReactNode {
   if (sources.length === 0) return null
 
-  const hasMore = sources.length > previewCount
-  const visible = expanded || !hasMore ? sources : sources.slice(0, previewCount - 1)
-  const hiddenCount = sources.length - (previewCount - 1)
-
   return (
-    <section className={cn('space-y-2', className)} aria-label="Sources">
+    <section className={cn('space-y-1', className)} aria-label="Sources">
       <h3 className="text-secondary flex items-center gap-1.5 text-sm font-medium">
         <SourceKindIcon kind="doc" /> Sources
       </h3>
-      <div className="flex flex-col gap-2">
-        {visible.map((s) => (
-          <SourceCard key={s.id} source={s} />
+      <div className="flex flex-col">
+        {sources.map((s) => (
+          <SourceRow key={s.id} source={s} />
         ))}
-        {hasMore && (
-          <button
-            type="button"
-            onClick={() => setExpanded((prev) => !prev)}
-            aria-expanded={expanded}
-            className="bg-surface-raised border-base text-secondary hover:bg-surface-sunken hover:text-primary flex flex-col items-start justify-center gap-1 rounded-[var(--radius-card)] border p-3 text-sm transition-colors"
-          >
-            <span className="font-medium">{expanded ? 'Show fewer' : `+${hiddenCount} more`}</span>
-            <span className="text-subtle text-xs">{expanded ? 'Collapse sources' : 'View all sources'}</span>
-          </button>
-        )}
       </div>
     </section>
   )
