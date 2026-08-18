@@ -566,4 +566,110 @@ describe('useLoadJobData', () => {
       completedAt: expect.any(Date),
     })
   })
+
+  test('id-keys interleaved same-tool outputs to each worker on full job load', async () => {
+    mockGetJobStatus.mockResolvedValue({ job_id: 'job-123', status: 'success', error: null })
+    mockCreateDeepResearchClient.mockImplementation(({ callbacks }) => ({
+      connect: vi.fn(() => {
+        callbacks.onToolStart?.('web_search', { q: 'a' }, 'researcher-agent', 'e1', 'researcher-1', false)
+        callbacks.onToolStart?.('web_search', { q: 'b' }, 'researcher-agent', 'e2', 'researcher-2', false)
+        callbacks.onToolEnd?.('web_search', 'result A', 'e3', 'researcher-1')
+        callbacks.onToolEnd?.('web_search', 'result B', 'e4', 'researcher-2')
+        callbacks.onComplete?.()
+      }),
+      disconnect: vi.fn(),
+      isConnected: vi.fn(() => false),
+      getLastEventId: vi.fn(() => null),
+    }))
+
+    const { result } = renderHook(() => useLoadJobData())
+
+    await act(async () => {
+      await result.current.importJobStream('job-123')
+    })
+
+    const replayCommit = vi.mocked(useChatStore.setState).mock.calls[0]?.[0]
+    const updates = (replayCommit as unknown as (state: { currentStatus: string }) => Record<string, unknown>)({
+      currentStatus: 'researching',
+    })
+    const toolCalls = updates.deepResearchToolCalls as Array<Record<string, unknown>>
+    const rowA = toolCalls.find((t) => t.agentId === 'researcher-1')
+    const rowB = toolCalls.find((t) => t.agentId === 'researcher-2')
+
+    expect(rowA?.input).toEqual({ q: 'a' })
+    expect(rowB?.input).toEqual({ q: 'b' })
+    expect(String(rowA?.output)).toContain('result A')
+    expect(String(rowA?.output)).not.toContain('result B')
+    expect(String(rowB?.output)).toContain('result B')
+    expect(String(rowB?.output)).not.toContain('result A')
+  })
+
+  test('id-keys same-tool outputs on full job load even when ends arrive out of order', async () => {
+    mockGetJobStatus.mockResolvedValue({ job_id: 'job-123', status: 'success', error: null })
+    mockCreateDeepResearchClient.mockImplementation(({ callbacks }) => ({
+      connect: vi.fn(() => {
+        callbacks.onToolStart?.('web_search', { q: 'a' }, 'researcher-agent', 'e1', 'researcher-1', false)
+        callbacks.onToolStart?.('web_search', { q: 'b' }, 'researcher-agent', 'e2', 'researcher-2', false)
+        callbacks.onToolEnd?.('web_search', 'result B', 'e4', 'researcher-2')
+        callbacks.onToolEnd?.('web_search', 'result A', 'e3', 'researcher-1')
+        callbacks.onComplete?.()
+      }),
+      disconnect: vi.fn(),
+      isConnected: vi.fn(() => false),
+      getLastEventId: vi.fn(() => null),
+    }))
+
+    const { result } = renderHook(() => useLoadJobData())
+
+    await act(async () => {
+      await result.current.importJobStream('job-123')
+    })
+
+    const replayCommit = vi.mocked(useChatStore.setState).mock.calls[0]?.[0]
+    const updates = (replayCommit as unknown as (state: { currentStatus: string }) => Record<string, unknown>)({
+      currentStatus: 'researching',
+    })
+    const toolCalls = updates.deepResearchToolCalls as Array<Record<string, unknown>>
+    const rowA = toolCalls.find((t) => t.agentId === 'researcher-1')
+    const rowB = toolCalls.find((t) => t.agentId === 'researcher-2')
+
+    expect(String(rowA?.output)).toContain('result A')
+    expect(String(rowB?.output)).toContain('result B')
+  })
+
+  test('id-keys interleaved same-model LLM thinking to each worker on full job load', async () => {
+    mockGetJobStatus.mockResolvedValue({ job_id: 'job-123', status: 'success', error: null })
+    mockCreateDeepResearchClient.mockImplementation(({ callbacks }) => ({
+      connect: vi.fn(() => {
+        callbacks.onLLMStart?.('gpt-4', 'researcher-agent', 'researcher-1')
+        callbacks.onLLMChunk?.('chunk-1')
+        callbacks.onLLMStart?.('gpt-4', 'researcher-agent', 'researcher-2')
+        callbacks.onLLMChunk?.('chunk-2')
+        callbacks.onLLMEnd?.('out A', 'thinking A', { input_tokens: 1, output_tokens: 2 }, 'gpt-4', 'researcher-1')
+        callbacks.onLLMEnd?.('out B', 'thinking B', { input_tokens: 3, output_tokens: 4 }, 'gpt-4', 'researcher-2')
+        callbacks.onComplete?.()
+      }),
+      disconnect: vi.fn(),
+      isConnected: vi.fn(() => false),
+      getLastEventId: vi.fn(() => null),
+    }))
+
+    const { result } = renderHook(() => useLoadJobData())
+
+    await act(async () => {
+      await result.current.importJobStream('job-123')
+    })
+
+    const replayCommit = vi.mocked(useChatStore.setState).mock.calls[0]?.[0]
+    const updates = (replayCommit as unknown as (state: { currentStatus: string }) => Record<string, unknown>)({
+      currentStatus: 'researching',
+    })
+    const llmSteps = updates.deepResearchLLMSteps as Array<Record<string, unknown>>
+    const rowFor = (content: string) => llmSteps.find((s) => s.content === content)
+
+    expect(rowFor('chunk-1')?.thinking).toBe('thinking A')
+    expect(rowFor('chunk-1')?.usage).toEqual({ input_tokens: 1, output_tokens: 2 })
+    expect(rowFor('chunk-2')?.thinking).toBe('thinking B')
+    expect(rowFor('chunk-2')?.usage).toEqual({ input_tokens: 3, output_tokens: 4 })
+  })
 })

@@ -191,22 +191,6 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
         clientRef.current = null
       }
 
-      const correlator = createResearchCorrelator({
-        hasUserMessage: () => Boolean(useChatStore.getState().currentUserMessageId),
-        addThinkingStep,
-        appendToThinkingStep,
-        completeThinkingStep,
-        addAgent: addDeepResearchAgentWithId,
-        completeAgent: completeDeepResearchAgent,
-        addToolCall: addDeepResearchToolCall,
-        completeToolCall: completeDeepResearchToolCall,
-        addLLMStep: addDeepResearchLLMStep,
-        appendLLMStep: appendToDeepResearchLLMStep,
-        completeLLMStep: completeDeepResearchLLMStep,
-      })
-      correlatorRef.current = correlator
-      resetTimeout()
-
       // ---------- inline buffer for replay phase ----------
       // bufferReplay=true on page-refresh reconnect: buffer ALL replayed events
       // with zero store writes (like streamFullJob). The backend sends a
@@ -219,8 +203,6 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
         active: bufferReplay,
         timer: null as NodeJS.Timeout | null,
         idCounter: 0,
-        activeLLMStack: [] as string[],
-        activeToolStacks: new Map<string, string[]>(),
         agents: new Map<
           string,
           { name: string; input?: string; output?: string; ended: boolean }
@@ -232,6 +214,84 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
         files: new Map<string, FileArtifactUpdate>(),
         reportContent: null as string | null,
       }
+
+      const correlator = createResearchCorrelator({
+        hasUserMessage: () => !buf.active && Boolean(useChatStore.getState().currentUserMessageId),
+        addThinkingStep,
+        appendToThinkingStep,
+        completeThinkingStep,
+        addAgent: (agentId, agent) => {
+          if (buf.active) {
+            if (!buf.agents.has(agentId)) {
+              buf.agents.set(agentId, { name: agent.name, input: agent.input, ended: false })
+            }
+            return agentId
+          }
+          return addDeepResearchAgentWithId(agentId, agent)
+        },
+        completeAgent: (agentId, output) => {
+          if (buf.active) {
+            const agent = buf.agents.get(agentId)
+            if (agent) {
+              agent.output = output
+              agent.ended = true
+            }
+            return
+          }
+          completeDeepResearchAgent(agentId, output)
+        },
+        addToolCall: (toolCall) => {
+          if (buf.active) {
+            const id = `tool-${buf.idCounter++}`
+            buf.toolCalls.set(id, {
+              name: toolCall.name,
+              input: toolCall.input,
+              workflow: toolCall.workflow,
+              agentId: toolCall.agentId,
+              isSandbox: toolCall.isSandbox,
+            })
+            return id
+          }
+          return addDeepResearchToolCall(toolCall)
+        },
+        completeToolCall: (toolCallId, output) => {
+          if (buf.active) {
+            const toolCall = buf.toolCalls.get(toolCallId)
+            if (toolCall) toolCall.output = output ? JSON.stringify(output) : undefined
+            return
+          }
+          completeDeepResearchToolCall(toolCallId, output)
+        },
+        addLLMStep: (step) => {
+          if (buf.active) {
+            const id = `llm-${buf.idCounter++}`
+            buf.llmSteps.set(id, { name: step.name, workflow: step.workflow, content: step.content })
+            return id
+          }
+          return addDeepResearchLLMStep(step)
+        },
+        appendLLMStep: (stepId, chunk) => {
+          if (buf.active) {
+            const step = buf.llmSteps.get(stepId)
+            if (step) step.content += chunk
+            return
+          }
+          appendToDeepResearchLLMStep(stepId, chunk)
+        },
+        completeLLMStep: (stepId, thinking, usage) => {
+          if (buf.active) {
+            const step = buf.llmSteps.get(stepId)
+            if (step) {
+              step.thinking = thinking
+              step.usage = usage
+            }
+            return
+          }
+          completeDeepResearchLLMStep(stepId, thinking, usage)
+        },
+      })
+      correlatorRef.current = correlator
+      resetTimeout()
 
       /** The stream may outlive the selected job; guard every delayed flush by job ID. */
       const isActiveJob = (): boolean => isOwnerActive(jobId)
@@ -280,16 +340,6 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
           currentStatus: buf.reportContent !== null ? 'writing' : state.currentStatus,
         }))
 
-        // Bridge in-progress items to live mode so their end events
-        // (llm.end with usage, tool.end with output) can find them
-        for (const id of buf.activeLLMStack) {
-          const step = buf.llmSteps.get(id)
-          if (step) correlator.adoptLLMRun(undefined, step.name, { storeId: id })
-        }
-        for (const [name, stack] of buf.activeToolStacks) {
-          const lastId = stack[stack.length - 1]
-          if (lastId) correlator.adoptToolRun(undefined, name, { storeId: lastId })
-        }
         return true
       }
 
@@ -395,88 +445,50 @@ export const useDeepResearch = (): UseDeepResearchReturn => {
 
           onWorkflowStart: (name, input, eventId, agentId) => {
             const id = agentId || eventId || `agent-${buf.idCounter++}`
-            if (buf.active) {
-              if (!buf.agents.has(id)) {
-                buf.agents.set(id, {
-                  name,
-                  input: input
-                    ? typeof input === 'string'
-                      ? input
-                      : JSON.stringify(input)
-                    : undefined,
-                  ended: false,
-                })
-              }
-              return
+            if (!buf.active) {
+              if (!isActiveJob()) return
+              resetTimeout()
             }
-            if (!isActiveJob()) return
-            resetTimeout()
             correlator.onWorkflowStart(id, name, input)
           },
 
           onWorkflowEnd: (name, output, eventId, agentId) => {
-            if (buf.active) {
-              if (agentId) {
-                const agent = buf.agents.get(agentId)
-                if (agent) {
-                  agent.output = output
-                    ? typeof output === 'string'
-                      ? output
-                      : JSON.stringify(output)
-                    : undefined
-                  agent.ended = true
-                }
-              }
-              return
-            }
-            if (!isActiveJob()) return
+            if (!buf.active && !isActiveJob()) return
             correlator.onWorkflowEnd(agentId || eventId, name, output)
           },
 
           onLLMStart: (name, workflow, agentId) => {
-            if (buf.active) {
-              const id = `llm-${buf.idCounter++}`; buf.activeLLMStack.push(id); buf.llmSteps.set(id, { name, workflow, content: '' }); return
-            }
-            if (!isActiveJob()) return
+            if (!buf.active && !isActiveJob()) return
             correlator.onLLMStart(agentId, name, workflow)
           },
 
           onLLMChunk: (chunk) => {
-            if (buf.active) {
-              const id = buf.activeLLMStack[buf.activeLLMStack.length - 1]; if (id) { const s = buf.llmSteps.get(id); if (s) s.content += chunk }; return
+            if (!buf.active) {
+              if (!isActiveJob()) return
+              resetTimeout()
             }
-            if (!isActiveJob()) return
-            resetTimeout()
             correlator.onLLMChunk(chunk)
           },
 
           onLLMEnd: (_output, thinking, usage, name, agentId) => {
-            if (buf.active) {
-              const id = buf.activeLLMStack.pop(); if (id) { const s = buf.llmSteps.get(id); if (s) { s.thinking = thinking; s.usage = usage } }; return
-            }
-            if (!isActiveJob()) return
+            if (!buf.active && !isActiveJob()) return
             correlator.onLLMEnd(agentId, name, thinking, usage)
           },
 
           onToolStart: (name, input, workflow, _eventId, agentId, isSandbox) => {
             if (name === 'task') return
-            if (buf.active) {
-              const id = `tool-${buf.idCounter++}`; buf.toolCalls.set(id, { name, input, workflow, agentId, isSandbox })
-              let stack = buf.activeToolStacks.get(name); if (!stack) { stack = []; buf.activeToolStacks.set(name, stack) }; stack.push(id); return
+            if (!buf.active) {
+              if (!isActiveJob()) return
+              resetTimeout(); setCurrentStatus('searching')
             }
-            if (!isActiveJob()) return
-            resetTimeout(); setCurrentStatus('searching')
             correlator.onToolStart(agentId, name, input, workflow, isSandbox)
           },
 
           onToolEnd: (name, output, _eventId, agentId) => {
             if (name === 'task') return
-            if (buf.active) {
-              const stack = buf.activeToolStacks.get(name); const id = stack?.pop(); if (id) { const t = buf.toolCalls.get(id); if (t) t.output = output ? JSON.stringify(output) : undefined }; return
-            }
-            if (!isActiveJob()) return
+            if (!buf.active && !isActiveJob()) return
             correlator.onToolEnd(agentId, name, output)
-            setCurrentStatus('researching')
+            if (!buf.active) setCurrentStatus('researching')
           },
 
           onTodoUpdate: (todos: TodoItem[], workflow?: string) => {
