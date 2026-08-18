@@ -15,8 +15,8 @@ const REFERENCES_BLOCK_RE =
 /** A single `- [N] ...` reference line. */
 const REFERENCE_LINE_RE = /^\s*[-*]?\s*\[(\d{1,3})\]\s*(.+?)\s*$/
 
-/** A trailing ` - URL` (web source) on a reference line. */
-const TRAILING_URL_RE = /^(.*?)\s*[-\u2013\u2014]\s*(https?:\/\/\S+)\s*$/i
+/** A trailing URL (web source) on a reference line, after a dash, colon, or bare space. */
+const TRAILING_URL_RE = /^(.*?)\s*[-:\u2013\u2014]?\s*(https?:\/\/\S+)\s*$/i
 
 /** A `filename, p.N` / `filename p. N` file-with-page tail. */
 const FILE_PAGE_RE = /,?\s*p\.?\s*\d+\s*$/i

@@ -59,6 +59,25 @@ describe('splitReferences', () => {
     expect(sources[1]).toMatchObject({ url: 'https://docs.example.ai/report', kind: 'web', label: 'docs.example.ai' })
   })
 
+  test('parses the canonical `[N] Title: URL` colon form as a linked web source', () => {
+    const content =
+      'Revenue rose sharply [1] and [2].\n\n**References:**\n- [1] Q4 Report: https://example.com/q4\n- [2] Blog post https://blog.example.io/post'
+    const { sources } = splitReferences(content)
+    expect(sources).toHaveLength(2)
+    expect(sources[0]).toMatchObject({
+      title: 'Q4 Report',
+      url: 'https://example.com/q4',
+      kind: 'web',
+      label: 'example.com',
+    })
+    expect(sources[1]).toMatchObject({
+      title: 'Blog post',
+      url: 'https://blog.example.io/post',
+      kind: 'web',
+      label: 'blog.example.io',
+    })
+  })
+
   test('parses file-with-page and bare tool references as documents', () => {
     const content =
       'See attached docs [1] and the search [2].\n\n## Sources\n- [1] fleet_overview.pdf, p.4\n- [2] knowledge_search'
