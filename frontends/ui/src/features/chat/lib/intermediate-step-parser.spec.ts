@@ -79,7 +79,7 @@ describe('folded-text step predicates', () => {
 
 describe('getDisplayName', () => {
   test('upper-cases GPT in model names', () => {
-    expect(getDisplayName('openai/gpt-oss-120b')).toBe('GPT Oss 120b')
+    expect(getDisplayName('openai/gpt-5.6-sol')).toBe('GPT 5.6 Sol')
     expect(getDisplayName('openai/gpt-4.1-mini')).toBe('GPT 4.1 Mini')
   })
 
